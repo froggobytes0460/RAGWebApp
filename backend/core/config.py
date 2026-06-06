@@ -13,6 +13,8 @@ ENV_FILE = BASE_DIR / ".env"
 
 
 class VectorStoreSettings(BaseModel):
+    """Settings for vector store."""
+
     path: DirectoryPath = Field(
         default=BASE_DIR / "chroma_db",
         description="Local directory path where Chroma DB will persist its data files.",
@@ -51,6 +53,8 @@ class VectorStoreSettings(BaseModel):
 
 
 class SearchSettings(BaseModel):
+    """Settings for search."""
+
     top_k: int = Field(
         ..., ge=1, description="Number of best-matching chunks for system retrieval."
     )
@@ -67,6 +71,8 @@ class SearchSettings(BaseModel):
 
 
 class LLMSettings(BaseModel):
+    """Settings for LLM."""
+
     temperature: float = Field(
         ge=0,
         le=1,
@@ -81,6 +87,8 @@ class LLMSettings(BaseModel):
 
 
 class Settings(BaseSettings):
+    """Global settings parsed from environment variables."""
+
     groq_api_key: SecretStr = Field(..., description="API key for Groq LLM provider.")
     vector_store: VectorStoreSettings
     search: SearchSettings
@@ -104,5 +112,5 @@ class Settings(BaseSettings):
         return v
 
 
-# Singleton setting pattern
 settings = Settings()  # pyright: ignore[reportCallIssue]
+"""Singleton setting pattern"""
