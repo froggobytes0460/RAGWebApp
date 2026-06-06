@@ -20,6 +20,9 @@ dev = [
     "pytest-cov>=7.1.0",
 ]
 
+[tool.black]
+target-version = ["py313"]
+
 [tool.hatch.build.targets.wheel]
 packages = ["backend"]
 
