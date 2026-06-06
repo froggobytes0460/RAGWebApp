@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import ClassVar, Literal, Self
+from typing import Annotated, ClassVar, Literal, Self
 
 from pydantic.fields import Field
 from pydantic.functional_validators import field_validator, model_validator
@@ -15,20 +15,33 @@ ENV_FILE = BASE_DIR / ".env"
 class VectorStoreSettings(BaseModel):
     """Settings for vector store."""
 
-    path: DirectoryPath = Field(
-        default=BASE_DIR / "chroma_db",
-        description="Local directory path where Chroma DB will persist its data files.",
+    path: Annotated[
+        DirectoryPath,
+        Field(
+            description="Local directory path where Chroma DB will persist its data files."
+        ),
+    ] = (
+        BASE_DIR / "chroma_db"
     )
-    collection_name: str = Field(
-        default="rag_documents",
-        description="The target collection segment name inside the Chroma database instance.",
-    )
-    embedding_model: str = Field(
-        default="sentence-transformers/all-MiniLM-L6-v2",
-        description="HuggingFace model ID or Ollama name used to compute text vector profiles.",
-    )
-    chunk_size: int = Field(..., gt=0, description="Size of each chunk size.")
-    chunk_overlap: int = Field(..., ge=0, description="Amount of tokens allowed to be ")
+
+    collection_name: Annotated[
+        str,
+        Field(
+            description="The target collection segment name inside the Chroma database instance."
+        ),
+    ] = "rag_documents"
+
+    embedding_model: Annotated[
+        str,
+        Field(
+            description="HuggingFace model ID or Ollama name used to compute text vector profiles."
+        ),
+    ] = "sentence-transformers/all-MiniLM-L6-v2"
+
+    chunk_size: Annotated[int, Field(gt=0, description="Size of each chunk size.")]
+    chunk_overlap: Annotated[
+        int, Field(ge=0, description="Amount of tokens allowed to be ")
+    ]
 
     @field_validator("path", mode="before")
     @classmethod
@@ -55,41 +68,55 @@ class VectorStoreSettings(BaseModel):
 class SearchSettings(BaseModel):
     """Settings for search."""
 
-    top_k: int = Field(
-        ..., ge=1, description="Number of best-matching chunks for system retrieval."
-    )
-    search_type: Literal["similarity", "mmr", "similarity_score_threshold"] = Field(
-        default="similarity",
-        description="The strategy algorithm LangChain employs to pull related reference context.",
-    )
-    score_threshold: float = Field(
-        default=0.5,
-        ge=0.0,
-        le=1.0,
-        description="Relevance confidence minimum; only used if search_type is set to threshold matching.",
-    )
+    top_k: Annotated[
+        int,
+        Field(ge=1, description="Number of best-matching chunks for system retrieval."),
+    ]
+
+    search_type: Annotated[
+        Literal["similarity", "mmr", "similarity_score_threshold"],
+        Field(
+            description="The strategy algorithm LangChain employs to pull related reference context."
+        ),
+    ] = "similarity"
+
+    score_threshold: Annotated[
+        float,
+        Field(
+            ge=0.0,
+            le=1.0,
+            description="Relevance confidence minimum; only used if search_type is set to threshold matching.",
+        ),
+    ] = 0.5
 
 
 class LLMSettings(BaseModel):
     """Settings for LLM."""
 
-    temperature: float = Field(
-        ge=0,
-        le=1,
-        default=0.2,
-        description="Controls randomness and creativity of LLM model's response. Default: 0.2",
-    )
-    top_p: float = Field(..., ge=0.1, le=1, description="Predictablity of LLM output.")
-    max_output_token: int = Field(
-        ..., ge=1, description="Maximum tokens of LLM output."
-    )
-    model_name: str = Field(..., description="Name of LLM model used from Groq.")
+    temperature: Annotated[
+        float,
+        Field(
+            ge=0,
+            le=1,
+            description="Controls randomness and creativity of LLM model's response. Default: 0.2",
+        ),
+    ] = 0.2
+
+    top_p: Annotated[
+        float, Field(ge=0.1, le=1, description="Predictablity of LLM output.")
+    ]
+    max_output_token: Annotated[
+        int, Field(ge=1, description="Maximum tokens of LLM output.")
+    ]
+    model_name: Annotated[str, Field(description="Name of LLM model used from Groq.")]
 
 
 class Settings(BaseSettings):
     """Global settings parsed from environment variables."""
 
-    groq_api_key: SecretStr = Field(..., description="API key for Groq LLM provider.")
+    groq_api_key: Annotated[
+        SecretStr, Field(description="API key for Groq LLM provider.")
+    ]
     vector_store: VectorStoreSettings
     search: SearchSettings
     llm: LLMSettings
