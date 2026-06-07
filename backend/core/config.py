@@ -12,6 +12,12 @@ BASE_DIR = Path(__file__).parents[2]
 ENV_FILE = BASE_DIR / ".env"
 
 
+class IngestSettings(BaseModel):
+    max_file_size: Annotated[
+        int, Field(ge=1, description="Maximum filesize for each file.")
+    ] = 50
+
+
 class VectorStoreSettings(BaseModel):
     """Settings for vector store."""
 
@@ -120,6 +126,7 @@ class Settings(BaseSettings):
     vector_store: VectorStoreSettings
     search: SearchSettings
     llm: LLMSettings
+    ingest: IngestSettings
 
     model_config: ClassVar[SettingsConfigDict] = SettingsConfigDict(
         env_file=ENV_FILE,
