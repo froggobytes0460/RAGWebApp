@@ -31,7 +31,11 @@ packages = ["backend"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
-addopts = "--cov-report=term-missing --cov-fail-under=80 --junitxml=junit.xml"
+addopts = "--cov=backend --cov-report=term-missing --cov-fail-under=80 --junitxml=junit.xml"
+filterwarnings = [
+    "ignore:This field is deprecated. Use `generate_page_images=True`:DeprecationWarning:docling.*",
+    "ignore:deprecated:DeprecationWarning:rapidocr.*",
+]
 
 [build-system]
 requires = ["hatchling"]

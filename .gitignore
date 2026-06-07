@@ -29,6 +29,8 @@ dist/
 .pytest_cache/
 .coverage
 htmlcov/
+junit.xml
+tests/fixtures/ingest/large
 
 # OS
 .DS_Store
