@@ -24,6 +24,8 @@ from pydantic.functional_validators import AfterValidator, model_validator
 from pydantic.main import BaseModel
 from pydantic.types import FilePath
 
+from backend.core.config import IngestSettings, settings
+
 
 def verify_file_integrity(path: Path) -> Path:
     """Prevent file spoofing."""
@@ -70,6 +72,7 @@ class DocumentIngestor(BaseModel):
     file_path: Annotated[
         VerifiedFilePath, Field(description="File path of the Document to be ingested.")
     ]
+    config: IngestSettings = Field(default_factory=lambda: settings.ingest)
 
     @computed_field
     @property
@@ -86,14 +89,16 @@ class DocumentIngestor(BaseModel):
 
     def _get_optimized_loader(self) -> DoclingLoader:
         pdf_pipeline_options = PdfPipelineOptions()
-        pdf_pipeline_options.do_ocr = False
-        pdf_pipeline_options.do_table_structure = False
-        pdf_pipeline_options.generate_page_images = False
-        pdf_pipeline_options.generate_picture_images = False
+        pdf_pipeline_options.do_ocr = self.config.do_ocr
+        pdf_pipeline_options.do_table_structure = self.config.do_table_structure
+        pdf_pipeline_options.generate_page_images = self.config.generate_page_images
+        pdf_pipeline_options.generate_picture_images = (
+            self.config.generate_picture_images
+        )
 
         other_pipeline_options = ConvertPipelineOptions(
-            do_picture_classification=False,
-            do_picture_description=False,
+            do_picture_classification=self.config.do_picture_classification,
+            do_picture_description=self.config.do_picture_description,
         )
 
         format_options: dict[InputFormat, FormatOption] = {

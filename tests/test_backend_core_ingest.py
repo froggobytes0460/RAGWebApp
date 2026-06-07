@@ -2,6 +2,7 @@ from pathlib import Path
 from typing import cast
 
 import pytest
+from backend.core.config import IngestSettings
 from backend.core.ingest import DocumentIngestor, StrictMetadata
 from langchain_core.documents import Document
 
@@ -11,6 +12,18 @@ FIXTURE_NEEDLES: dict[str, list[str]] = {
     "md": ["MD-TEST-2026", "Yasir Atiq", "PL-HYBRID-03", "o200k_base"],
     "xlsx": ["Name", "Category", "Status"],
 }
+
+
+@pytest.fixture(scope="session")
+def fast_ingest_config() -> IngestSettings:
+    return IngestSettings(
+        do_ocr=False,
+        do_table_structure=False,
+        generate_page_images=False,
+        generate_picture_images=False,
+        do_picture_classification=False,
+        do_picture_description=False,
+    )
 
 
 async def test_ingest_unsupported_extension(tmp_path: Path) -> None:
@@ -33,11 +46,16 @@ async def test_ingest_unsupported_extension(tmp_path: Path) -> None:
     ],
 )
 async def test_ingest_fixtures_metadata_and_structural_integrity(
-    request: pytest.FixtureRequest, fixture_key: str, fixture_name_attr: str
+    request: pytest.FixtureRequest,
+    fixture_key: str,
+    fixture_name_attr: str,
+    fast_ingest_config: IngestSettings,
 ) -> None:
     fixture_path = cast(Path, request.getfixturevalue(argname=fixture_name_attr))
 
-    ingestor: DocumentIngestor = DocumentIngestor(file_path=fixture_path)
+    ingestor: DocumentIngestor = DocumentIngestor(
+        file_path=fixture_path, config=fast_ingest_config
+    )
     docs = await ingestor.ingest_async()
 
     assert isinstance(docs, list) and len(docs) > 0
