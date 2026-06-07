@@ -29,7 +29,7 @@ dist/
 .pytest_cache/
 .coverage
 htmlcov/
-junit.xml
+test-results/*
 tests/fixtures/ingest/large
 
 # OS
