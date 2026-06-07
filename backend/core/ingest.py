@@ -72,7 +72,7 @@ class DocumentIngestor(BaseModel):
     file_path: Annotated[
         VerifiedFilePath, Field(description="File path of the Document to be ingested.")
     ]
-    config: IngestSettings = Field(default_factory=lambda: settings.ingest)
+    config: IngestSettings = settings.ingest
 
     @computed_field
     @property

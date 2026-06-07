@@ -76,7 +76,7 @@ async def test_ingest_fixtures_metadata_and_structural_integrity(
 @pytest.mark.parametrize(
     argnames="metadata_dict, fallback_idx, expected_page",
     argvalues=[
-        ({"page": 5}, 2, 5),  # Fixed from 6 to 5 to match your extractor's logic
+        ({"page": 5}, 2, 5),
         ({}, 2, 2),
     ],
 )
