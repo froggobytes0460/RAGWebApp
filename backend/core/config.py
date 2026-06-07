@@ -12,6 +12,37 @@ BASE_DIR = Path(__file__).parents[2]
 ENV_FILE = BASE_DIR / ".env"
 
 
+class IngestSettings(BaseModel):
+    max_file_size: Annotated[
+        int, Field(ge=1, description="Maximum filesize for each file.")
+    ] = 50
+    do_ocr: Annotated[
+        bool, Field(description="Enable optical character recognition for scans.")
+    ] = False
+    do_table_structure: Annotated[
+        bool, Field(description="Extract structural table grids into data layers.")
+    ] = False
+    generate_page_images: Annotated[
+        bool, Field(description="Render individual page images into memory.")
+    ] = False
+    generate_picture_images: Annotated[
+        bool, Field(description="Extract standalone image crops from documents.")
+    ] = False
+    do_picture_classification: Annotated[
+        bool, Field(description="Run classification algorithms on embedded graphics.")
+    ] = False
+    do_picture_description: Annotated[
+        bool, Field(description="Generate textual descriptions for layout pictures.")
+    ] = False
+
+    @model_validator(mode="after")
+    def validate_picture_dependencies(self) -> Self:
+        if not self.generate_picture_images:
+            self.do_picture_classification = False
+            self.do_picture_description = False
+        return self
+
+
 class VectorStoreSettings(BaseModel):
     """Settings for vector store."""
 
@@ -120,6 +151,7 @@ class Settings(BaseSettings):
     vector_store: VectorStoreSettings
     search: SearchSettings
     llm: LLMSettings
+    ingest: IngestSettings
 
     model_config: ClassVar[SettingsConfigDict] = SettingsConfigDict(
         env_file=ENV_FILE,
