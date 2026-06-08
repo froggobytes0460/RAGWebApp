@@ -64,10 +64,13 @@ class VectorStoreSettings(BaseModel):
 
     embedding_model: Annotated[
         str,
-        Field(
-            description="HuggingFace model ID or Ollama name used to compute text vector profiles."
-        ),
+        Field(description="HuggingFace model ID used to compute text vector profiles."),
     ] = "sentence-transformers/all-MiniLM-L6-v2"
+
+    tokenizer_model: Annotated[
+        str,
+        Field(description="HuggingFace model ID used to tokenize."),
+    ] = "BAAI/bge-large-en-v1.5"
 
     chunk_size: Annotated[int, Field(gt=0, description="Size of each chunk size.")]
     chunk_overlap: Annotated[
