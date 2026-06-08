@@ -44,7 +44,3 @@ Thumbs.db
 
 ## Track template .env file
 !.env.example
-
-# Vector Stores & Embedded Databases
-**/chroma_db/
-**/chroma_db*
