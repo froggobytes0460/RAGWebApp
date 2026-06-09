@@ -33,7 +33,9 @@ class TextChunker:
                 if cls._recursive_text_splitter is None:
                     cls._recursive_text_splitter = (
                         RecursiveCharacterTextSplitter.from_huggingface_tokenizer(
-                            tokenizer=_get_cached_tokenizer()
+                            tokenizer=_get_cached_tokenizer(),
+                            chunk_size=settings.vector_store.chunk_size,
+                            chunk_overlap=settings.vector_store.chunk_overlap,
                         )
                     )
         return cls._recursive_text_splitter
