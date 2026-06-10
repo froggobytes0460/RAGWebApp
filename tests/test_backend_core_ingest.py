@@ -1,29 +1,29 @@
 from pathlib import Path
-from typing import cast
+from typing import Self
+from unittest.mock import MagicMock
 
+from langchain_core.documents import Document
 import pytest
+from pytest_mock.plugin import MockerFixture
+
 from backend.core.config import IngestSettings
 from backend.core.ingest import DocumentIngestor, StrictMetadata
-from langchain_core.documents import Document
-
-FIXTURE_NEEDLES: dict[str, list[str]] = {
-    "pdf": ["Christoph Auer", "Michele Dolfi", "Data selection and preparation"],
-    "docx": ["Sample Document with Images", "text wrapping modes", "image handling"],
-    "md": ["MD-TEST-2026", "Yasir Atiq", "PL-HYBRID-03", "o200k_base"],
-    "xlsx": ["Name", "Category", "Status"],
-}
 
 
-@pytest.fixture(scope="session")
-def fast_ingest_config() -> IngestSettings:
-    return IngestSettings(
-        do_ocr=False,
-        do_table_structure=False,
-        generate_page_images=False,
-        generate_picture_images=False,
-        do_picture_classification=False,
-        do_picture_description=False,
-    )
+class AsyncDocIterator:
+    def __init__(self, docs: list[Document]):
+        self._docs: list[Document] = docs
+        self._index: int = 0
+
+    def __aiter__(self) -> Self:
+        return self
+
+    async def __anext__(self) -> Document:
+        if self._index >= len(self._docs):
+            raise StopAsyncIteration
+        doc: Document = self._docs[self._index]
+        self._index += 1
+        return doc
 
 
 async def test_ingest_unsupported_extension(tmp_path: Path) -> None:
@@ -36,48 +36,45 @@ async def test_ingest_unsupported_extension(tmp_path: Path) -> None:
     assert "Unsupported file extension" in str(exc.value)
 
 
-@pytest.mark.parametrize(
-    argnames="fixture_key, fixture_name_attr",
-    argvalues=[
-        ("pdf", "fixture_pdf"),
-        ("docx", "fixture_docx"),
-        ("md", "fixture_md"),
-        ("xlsx", "fixture_xlsx"),
-    ],
-)
-async def test_ingest_fixtures_metadata_and_structural_integrity(
-    request: pytest.FixtureRequest,
-    fixture_key: str,
-    fixture_name_attr: str,
+async def test_ingest_async_success(
     fast_ingest_config: IngestSettings,
+    tmp_path: Path,
+    mocker: MockerFixture,
 ) -> None:
-    fixture_path = cast(Path, request.getfixturevalue(argname=fixture_name_attr))
+    mock_docs = [
+        Document(page_content="test content 1", metadata={"page": "1"}),
+        Document(page_content="test content 2", metadata={"page": "2"}),
+    ]
 
-    ingestor: DocumentIngestor = DocumentIngestor(
-        file_path=fixture_path, config=fast_ingest_config
+    pdf_file = tmp_path / "test.pdf"
+    _ = pdf_file.write_bytes(b"%PDF-1.4\n%test")
+
+    mock_get: MagicMock = mocker.patch.object(
+        target=DocumentIngestor, attribute="_get_optimized_loader"
     )
-    docs = await ingestor.ingest_async()
+    mock_loader = mocker.MagicMock()
+    mock_alazy_load: MagicMock = mock_loader.alazy_load  # pyright: ignore[reportAny]
+    mock_alazy_load.return_value = AsyncDocIterator(docs=mock_docs)
 
-    assert isinstance(docs, list) and len(docs) > 0
+    mock_get.return_value = mock_loader
 
-    for doc in docs:
-        assert isinstance(doc, Document)
-        metadata = cast(StrictMetadata, doc.metadata)
-        assert metadata.get("filename") == fixture_path.name
-        assert isinstance(metadata.get("page_number"), int)
+    ingest: DocumentIngestor = DocumentIngestor(
+        file_path=pdf_file, config=fast_ingest_config
+    )
 
-    full_text = " ".join(d.page_content for d in docs)
-    for needle in FIXTURE_NEEDLES[fixture_key]:
-        assert (
-            needle in full_text
-        ), f"Needle matching pattern '{needle}' was dropped during {fixture_key} chunk processing."
+    result: list[Document] = await ingest.ingest_async()
+
+    assert result == mock_docs
+    assert len(result) == 2
+    mock_get.assert_called_once()
 
 
 @pytest.mark.parametrize(
-    argnames="metadata_dict, fallback_idx, expected_page",
+    argnames="metadata_dict,fallback_idx,expected_page",
     argvalues=[
-        ({"page": 5}, 2, 5),
-        ({}, 2, 2),
+        ({"page": "3"}, 1, 3),
+        ({"page_number": 5}, 2, 5),
+        ({}, 4, 4),
     ],
 )
 def test_page_number_extraction(

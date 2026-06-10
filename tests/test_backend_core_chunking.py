@@ -1,95 +1,66 @@
 import threading
 import time
-from unittest import mock
+from typing import Any
+from unittest.mock import MagicMock
 
 from langchain_core.documents import Document
-import pytest
+from pytest_mock import MockerFixture
 
-from backend.core.chunking import (
-    TextChunker,
-    _get_cached_tokenizer,  # pyright: ignore[reportPrivateUsage]
-)
-import backend.core.chunking as chunking
+from backend.core.chunking import TextChunker, _get_cached_tokenizer
 
 
-@pytest.fixture(autouse=True)
-def reset_tokenizer_cache(monkeypatch: pytest.MonkeyPatch):
-    """Clear the lru_cache and reset class variables before each test."""
-    _get_cached_tokenizer.cache_clear()
-    TextChunker._recursive_text_splitter = None  # pyright: ignore[reportPrivateUsage]
-
-    monkeypatch.setattr(chunking, "_INIT_LOCK", threading.Lock())
-    yield
-
-
-def test_tokenizer_is_cached(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Ensure that the tokenizer is created only once and then cached."""
-    mock_from_pretrained = mock.Mock(return_value=mock.Mock())
-    monkeypatch.setattr(
-        "backend.core.chunking.AutoTokenizer.from_pretrained", mock_from_pretrained
+def test_tokenizer_is_cached(mocker: MockerFixture) -> None:
+    mock_from_pretrained: MagicMock = mocker.patch(
+        "backend.core.chunking.AutoTokenizer.from_pretrained"
     )
 
-    t1 = _get_cached_tokenizer()
+    t1 = _get_cached_tokenizer()  # pyright: ignore[reportPrivateUsage]
     assert mock_from_pretrained.call_count == 1
 
-    t2 = _get_cached_tokenizer()
+    t2 = _get_cached_tokenizer()  # pyright: ignore[reportPrivateUsage]
     assert mock_from_pretrained.call_count == 1
     assert t1 is t2
 
 
-async def test_achunk_text_uses_splitter(monkeypatch: pytest.MonkeyPatch):
-    """Verify that achunk_text delegates to the underlying text splitter."""
+async def test_achunk_text_uses_splitter(mocker: MockerFixture) -> None:
     dummy_documents = [Document(page_content="doc1"), Document(page_content="doc2")]
     expected_chunks = [Document(page_content="chunk1"), Document(page_content="chunk2")]
 
-    class DummySplitter:
-        def split_documents(self, docs: list[Document]) -> list[Document]:
-            assert docs == dummy_documents
-            return expected_chunks
+    mock_splitter: MagicMock = mocker.MagicMock()
+    mock_split_docs: MagicMock = mock_splitter.split_documents
+    mock_split_docs.return_value = expected_chunks
 
-    monkeypatch.setattr(
-        TextChunker,
-        "_recursive_text_splitter",
-        DummySplitter(),
+    mocker.patch.object(
+        target=TextChunker,
+        attribute="_recursive_text_splitter",
+        new=mock_splitter,
     )
 
     chunker = TextChunker()
-    result = await chunker.achunk_text(dummy_documents)
+    result: list[Document] = await chunker.achunk_text(dummy_documents)
+
     assert result == expected_chunks
+    mock_split_docs.assert_called_once_with(dummy_documents)
 
 
-def test_splitter_initialization_is_threadsafe(monkeypatch: pytest.MonkeyPatch):
-    """Confirm that the splitter is created only once under heavy thread contention."""
-    dummy_splitter_instance = mock.Mock()
+def test_splitter_initialization_is_threadsafe(mocker: MockerFixture) -> None:
+    dummy_splitter_instance: MagicMock = mocker.MagicMock()
 
-    def delayed_ctor(
-        *args,  # pyright: ignore[reportUnknownParameterType, reportMissingParameterType, reportUnusedParameter]
-        **kwargs,  # pyright: ignore[reportUnknownParameterType, reportMissingParameterType, reportUnusedParameter]
-    ) -> mock.Mock:
-        time.sleep(0.05)
-        return dummy_splitter_instance
-
-    mock_splitter_ctor = mock.Mock(
-        side_effect=delayed_ctor  # pyright: ignore[reportUnknownArgumentType]
-    )
-    monkeypatch.setattr(
+    mock_splitter_ctor: MagicMock = mocker.patch(
         "backend.core.chunking.RecursiveCharacterTextSplitter.from_huggingface_tokenizer",
-        mock_splitter_ctor,
+        side_effect=lambda *args, **kwargs: (time.sleep(0.05), dummy_splitter_instance)[
+            1
+        ],
     )
 
-    # Pre-mock the tokenizer to isolate the splitter locking test logic
-    monkeypatch.setattr(
-        "backend.core.chunking._get_cached_tokenizer",
-        mock.Mock(),
-    )
+    mocker.patch("backend.core.chunking._get_cached_tokenizer")
 
-    def load_splitter():
-        return (
-            TextChunker._get_splitter_recursive()  # pyright: ignore[reportPrivateUsage]
+    threads: list[threading.Thread] = [
+        threading.Thread(
+            target=TextChunker._get_splitter_recursive  # pyright: ignore[reportPrivateUsage]
         )
-
-    # Spawn threads simultaneously
-    threads = [threading.Thread(target=load_splitter) for _ in range(5)]
+        for _ in range(5)
+    ]
     for t in threads:
         t.start()
     for t in threads:

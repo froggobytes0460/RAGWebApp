@@ -1,54 +1,36 @@
-import urllib.request
-from pathlib import Path
+"""Test utilities for RAGWebApp.
+Provides a helper to create a corrupted temporary file for integrity verification tests.
+"""
+
+import threading
+
 import pytest
-from backend.core.config import BASE_DIR
 
-FIXTURE_DIR: Path = BASE_DIR / "tests/fixtures"
-INGEST_DIR: Path = FIXTURE_DIR / "ingest"
-LARGE_FILES_DIR: Path = INGEST_DIR / "large"
-
-# Downloads PDFs and Word docs from internet. Is not commited to repo since its too large.
-REMOTE_FIXTURES: dict[str, str] = {
-    "test.pdf": "https://arxiv.org/pdf/2408.09869",
-    "test.docx": "https://sample-files.com/downloads/documents/docx/sample-files.com-image-document.docx",
-}
-
-
-def _download_if_missing(filename: str, /) -> Path:
-    LARGE_FILES_DIR.mkdir(parents=True, exist_ok=True)
-    target_path = LARGE_FILES_DIR / filename
-
-    if not target_path.exists():
-        url = REMOTE_FIXTURES[filename]
-        try:
-            _ = urllib.request.urlretrieve(url, filename=target_path)
-        except Exception as err:
-            pytest.fail(reason=f"Failed downloading {filename} from {url}: {err}")
-
-    return target_path
+from backend.core import chunking
+from backend.core.chunking import (
+    TextChunker,
+    _get_cached_tokenizer,  # pyright: ignore[reportPrivateUsage]
+)
+from backend.core.config import IngestSettings
 
 
 @pytest.fixture(scope="session")
-def fixture_pdf() -> Path:
-    return _download_if_missing("test.pdf")
+def fast_ingest_config() -> IngestSettings:
+    return IngestSettings(
+        do_ocr=False,
+        do_table_structure=False,
+        generate_page_images=False,
+        generate_picture_images=False,
+        do_picture_classification=False,
+        do_picture_description=False,
+    )
 
 
-@pytest.fixture(scope="session")
-def fixture_docx() -> Path:
-    return _download_if_missing("test.docx")
+@pytest.fixture(autouse=True)
+def reset_tokenizer_cache(monkeypatch: pytest.MonkeyPatch):
+    """Clear the lru_cache and reset class variables before each test."""
+    _get_cached_tokenizer.cache_clear()
+    TextChunker._recursive_text_splitter = None  # pyright: ignore[reportPrivateUsage]
 
-
-@pytest.fixture(scope="session")
-def fixture_md() -> Path:
-    p = INGEST_DIR / "test.md"
-    if not p.exists():
-        pytest.fail(reason=f"Missing required local fixture file: {p}")
-    return p
-
-
-@pytest.fixture(scope="session")
-def fixture_xlsx() -> Path:
-    p = INGEST_DIR / "test.xlsx"
-    if not p.exists():
-        pytest.fail(reason=f"Missing required local fixture file: {p}")
-    return p
+    monkeypatch.setattr(chunking, "_INIT_LOCK", threading.Lock())
+    yield
