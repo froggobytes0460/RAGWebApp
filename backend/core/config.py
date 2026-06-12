@@ -4,9 +4,10 @@ from typing import Annotated, ClassVar, Literal, Self
 from pydantic.fields import Field
 from pydantic.functional_validators import field_validator, model_validator
 from pydantic.main import BaseModel
-from pydantic.types import DirectoryPath, SecretStr
-from pydantic_core import PydanticCustomError
+from pydantic.networks import AnyHttpUrl
+from pydantic.types import SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
+import re
 
 BASE_DIR = Path(__file__).parents[2]
 ENV_FILE = BASE_DIR / ".env"
@@ -14,7 +15,7 @@ ENV_FILE = BASE_DIR / ".env"
 
 class IngestSettings(BaseModel):
     max_file_size: Annotated[
-        int, Field(ge=1, description="Maximum filesize for each file.")
+        float, Field(gt=0, description="Maximum filesize for each file (in MB).")
     ] = 50
     do_ocr: Annotated[
         bool, Field(description="Enable optical character recognition for scans.")
@@ -46,15 +47,6 @@ class IngestSettings(BaseModel):
 class VectorStoreSettings(BaseModel):
     """Settings for vector store."""
 
-    path: Annotated[
-        DirectoryPath,
-        Field(
-            description="Local directory path where Chroma DB will persist its data files."
-        ),
-    ] = (
-        BASE_DIR / "chroma_db"
-    )
-
     collection_name: Annotated[
         str,
         Field(
@@ -66,7 +58,49 @@ class VectorStoreSettings(BaseModel):
         str,
         Field(description="HuggingFace model ID used to compute text vector profiles."),
     ] = "sentence-transformers/all-MiniLM-L6-v2"
+    normalize_embeddings: Annotated[
+        bool,
+        Field(
+            description="Normalize text chunk embeddings before insertion into vector store."
+        ),
+    ] = True
 
+    url_or_path: Annotated[
+        AnyHttpUrl | Path,
+        Field(
+            description="URL or local path for Qdrant connection, default 'BASE_DIR/.qdrant_local/'."
+        ),
+    ] = (
+        BASE_DIR / ".qdrant_local/"
+    )
+    ttl: Annotated[
+        int,
+        Field(
+            ge=3600,
+            description="TTL for embedding vectors stored in vectorstore in seconds, minimum is one hour. (default: 24 hours.)",
+        ),
+    ] = 86400
+    vector_size: Annotated[
+        int, Field(ge=384, description="Size of embedding vectors.")
+    ] = 1024
+
+    @field_validator("url_or_path")
+    @classmethod
+    def verify_vectorstore_path(cls, v: Path | AnyHttpUrl) -> Path | AnyHttpUrl:
+        if not isinstance(v, Path):
+            return v
+
+        if not v.is_absolute():
+            v = (BASE_DIR / v).resolve()
+
+        if not v.is_file():
+            v.mkdir(parents=True, exist_ok=True)
+            return v
+
+        raise ValueError("Vector store storage path cannot be a file.")
+
+
+class TextChunkSettings(BaseModel):
     tokenizer_model: Annotated[
         str,
         Field(description="HuggingFace model ID used to tokenize."),
@@ -74,26 +108,18 @@ class VectorStoreSettings(BaseModel):
 
     chunk_size: Annotated[int, Field(gt=0, description="Size of each chunk size.")]
     chunk_overlap: Annotated[
-        int, Field(ge=0, description="Amount of tokens allowed to be ")
+        int,
+        Field(
+            ge=0,
+            description="Amount of tokens allowed to be overlapped between text chunks.",
+        ),
     ]
-
-    @field_validator("path", mode="before")
-    @classmethod
-    def ensure_directory_exists(cls, v: str | Path) -> Path:
-        directory = Path(v)
-        if (
-            not directory.is_file() and not directory.exists()
-        ):  # Let DirectoryPath handle filepaths.
-            directory.mkdir(parents=True)
-        return directory
 
     @model_validator(mode="after")
     def chunk_overlap_less_than_size(self) -> Self:
         if not self.chunk_overlap < self.chunk_size:
-            raise PydanticCustomError(
-                "value_error",
-                "chunk_overlap ({overlap}) must be strictly less than chunk_size ({size}).",
-                {"overlap": self.chunk_overlap, "size": self.chunk_size},
+            raise ValueError(
+                f"chunk_overlap ({self.chunk_overlap}) must be strictly less than chunk_size ({self.chunk_size})."
             )
 
         return self
@@ -106,20 +132,26 @@ class SearchSettings(BaseModel):
         int,
         Field(ge=1, description="Number of best-matching chunks for system retrieval."),
     ]
-
     search_type: Annotated[
         Literal["similarity", "mmr", "similarity_score_threshold"],
         Field(
             description="The strategy algorithm LangChain employs to pull related reference context."
         ),
     ] = "similarity"
-
     score_threshold: Annotated[
         float,
         Field(
             ge=0.0,
             le=1.0,
-            description="Relevance confidence minimum; only used if search_type is set to threshold matching.",
+            description="Relevance confidence minimum; only used if search_type is set to `similarity_score_threshold`.",
+        ),
+    ] = 0.5
+    lambda_mult: Annotated[
+        float,
+        Field(
+            ge=0.0,
+            le=1.0,
+            description="Controls relevance for `mmr` search type.",
         ),
     ] = 0.5
 
@@ -151,7 +183,11 @@ class Settings(BaseSettings):
     groq_api_key: Annotated[
         SecretStr, Field(description="API key for Groq LLM provider.")
     ]
+    qdrant_api_key: Annotated[
+        SecretStr | None, Field(description="API key for connecting to Qdrant Cloud.")
+    ] = None
     vector_store: VectorStoreSettings
+    text_chunk: TextChunkSettings
     search: SearchSettings
     llm: LLMSettings
     ingest: IngestSettings
@@ -163,15 +199,40 @@ class Settings(BaseSettings):
         frozen=True,
     )
 
+    GROQ_API_KEY_PATTERN: ClassVar[str] = r"^gsk_[a-zA-Z0-9]{48}$"
+    QDRANT_API_KEY_PATTERN: ClassVar[str] = r"^[A-Za-z0-9+/]{30,128}==?$"
+
     @field_validator("groq_api_key")
     @classmethod
-    def validate_groq_key_prefix(cls, v: SecretStr) -> SecretStr:
-        if not v.get_secret_value().startswith("gsk_"):
-            raise PydanticCustomError(
-                "value_error", "Groq API key must start with 'gsk_' prefix."
+    def validate_groq_api_key_prefix(cls, v: SecretStr) -> SecretStr:
+        if not re.match(cls.GROQ_API_KEY_PATTERN, v.get_secret_value()):
+            raise ValueError(
+                f"Groq API key must fit the regex expression: {cls.GROQ_API_KEY_PATTERN}"
             )
 
         return v
+
+    @model_validator(mode="after")
+    def validate_qdrant_auth(self) -> Self:
+        url_or_path = self.vector_store.url_or_path
+
+        if not isinstance(url_or_path, Path):
+            host = url_or_path.host or ""
+
+            if "qdrant.tech" in host:
+                if not self.qdrant_api_key:
+                    raise ValueError(
+                        f"A 'qdrant_api_key' is required when connecting to Qdrant Cloud cluster ({host})."
+                    )
+
+                if not re.match(
+                    self.QDRANT_API_KEY_PATTERN, self.qdrant_api_key.get_secret_value()
+                ):
+                    raise ValueError(
+                        "The provided 'qdrant_api_key' does not match the strict Qdrant Cloud pattern requirement."
+                    )
+
+        return self
 
 
 settings = Settings()  # pyright: ignore[reportCallIssue]
