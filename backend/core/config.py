@@ -17,21 +17,27 @@ class IngestSettings(BaseModel):
     max_file_size: Annotated[
         float, Field(gt=0, description="Maximum filesize for each file (in MB).")
     ] = 50
+
     do_ocr: Annotated[
         bool, Field(description="Enable optical character recognition for scans.")
     ] = False
+
     do_table_structure: Annotated[
         bool, Field(description="Extract structural table grids into data layers.")
     ] = False
+
     generate_page_images: Annotated[
         bool, Field(description="Render individual page images into memory.")
     ] = False
+
     generate_picture_images: Annotated[
         bool, Field(description="Extract standalone image crops from documents.")
     ] = False
+
     do_picture_classification: Annotated[
         bool, Field(description="Run classification algorithms on embedded graphics.")
     ] = False
+
     do_picture_description: Annotated[
         bool, Field(description="Generate textual descriptions for layout pictures.")
     ] = False
@@ -58,6 +64,7 @@ class VectorStoreSettings(BaseModel):
         str,
         Field(description="HuggingFace model ID used to compute text vector profiles."),
     ] = "sentence-transformers/all-MiniLM-L6-v2"
+
     normalize_embeddings: Annotated[
         bool,
         Field(
@@ -73,6 +80,7 @@ class VectorStoreSettings(BaseModel):
     ] = (
         BASE_DIR / ".qdrant_local/"
     )
+
     ttl: Annotated[
         int,
         Field(
@@ -80,6 +88,7 @@ class VectorStoreSettings(BaseModel):
             description="TTL for embedding vectors stored in vectorstore in seconds, minimum is one hour. (default: 24 hours.)",
         ),
     ] = 86400
+
     vector_size: Annotated[
         int, Field(ge=384, description="Size of embedding vectors.")
     ] = 1024
@@ -107,6 +116,7 @@ class TextChunkSettings(BaseModel):
     ] = "BAAI/bge-large-en-v1.5"
 
     chunk_size: Annotated[int, Field(gt=0, description="Size of each chunk size.")]
+
     chunk_overlap: Annotated[
         int,
         Field(
@@ -132,12 +142,14 @@ class SearchSettings(BaseModel):
         int,
         Field(ge=1, description="Number of best-matching chunks for system retrieval."),
     ]
+
     search_type: Annotated[
         Literal["similarity", "mmr", "similarity_score_threshold"],
         Field(
             description="The strategy algorithm LangChain employs to pull related reference context."
         ),
     ] = "similarity"
+
     score_threshold: Annotated[
         float,
         Field(
@@ -146,6 +158,7 @@ class SearchSettings(BaseModel):
             description="Relevance confidence minimum; only used if search_type is set to `similarity_score_threshold`.",
         ),
     ] = 0.5
+
     lambda_mult: Annotated[
         float,
         Field(
@@ -183,13 +196,19 @@ class Settings(BaseSettings):
     groq_api_key: Annotated[
         SecretStr, Field(description="API key for Groq LLM provider.")
     ]
+
     qdrant_api_key: Annotated[
         SecretStr | None, Field(description="API key for connecting to Qdrant Cloud.")
     ] = None
+
     vector_store: VectorStoreSettings
+
     text_chunk: TextChunkSettings
+
     search: SearchSettings
+
     llm: LLMSettings
+
     ingest: IngestSettings
 
     model_config: ClassVar[SettingsConfigDict] = SettingsConfigDict(
@@ -199,7 +218,7 @@ class Settings(BaseSettings):
         frozen=True,
     )
 
-    GROQ_API_KEY_PATTERN: ClassVar[str] = r"^gsk_[a-zA-Z0-9]{48}$"
+    GROQ_API_KEY_PATTERN: ClassVar[str] = r"^gsk_[a-zA-Z0-9]{48,64}$"
     QDRANT_API_KEY_PATTERN: ClassVar[str] = r"^[A-Za-z0-9+/]{30,128}==?$"
 
     @field_validator("groq_api_key")
