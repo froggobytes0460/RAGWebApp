@@ -31,7 +31,9 @@ exclude = [
     "**/__pycache__",
     "htmlcov",
     "test-results",
-    "tests/fixtures"
+    "tests/fixtures",
+    "README.md",
+    ".**pyc"
 ]
 
 [tool.black]
@@ -44,10 +46,6 @@ packages = ["backend"]
 asyncio_mode = "auto"
 testpaths = ["tests"]
 addopts = "--cov=backend --cov-report=term-missing --cov-fail-under=80 --junitxml=test-results/junit.xml"
-filterwarnings = [
-    "ignore:This field is deprecated. Use `generate_page_images=True`:DeprecationWarning:docling.*",
-    "ignore:deprecated:DeprecationWarning:rapidocr.*",
-]
 
 [build-system]
 requires = ["hatchling"]

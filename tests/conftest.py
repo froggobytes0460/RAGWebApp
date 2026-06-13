@@ -1,17 +1,36 @@
-"""Test utilities for RAGWebApp.
-Provides a helper to create a corrupted temporary file for integrity verification tests.
-"""
-
+from collections.abc import Callable
+from pathlib import Path
 import threading
+from typing import override
+from unittest.mock import AsyncMock, MagicMock
 
+from langchain_core.embeddings import Embeddings
+from langchain_core.vectorstores.base import VectorStoreRetriever
+from langchain_qdrant import QdrantVectorStore
 import pytest
+from pytest_mock import MockerFixture
+from qdrant_client import AsyncQdrantClient, QdrantClient
+from qdrant_client.models import UpdateResult, UpdateStatus
 
 from backend.core import chunking
 from backend.core.chunking import (
     TextChunker,
     _get_cached_tokenizer,  # pyright: ignore[reportPrivateUsage]
 )
-from backend.core.config import IngestSettings
+from backend.core.config import IngestSettings, settings
+from backend.core.vector_store import VectorStore
+
+
+class MockEmbeddings(Embeddings):
+    """Mock embeddings to prevent actual initialization of `HuggingFaceEmbeddings`."""
+
+    @override
+    def embed_documents(self, texts: list[str]) -> list[list[float]]:
+        return [[0.1] * settings.vector_store.vector_size for _ in texts]
+
+    @override
+    def embed_query(self, text: str) -> list[float]:
+        return [0.1] * settings.vector_store.vector_size
 
 
 @pytest.fixture(scope="session")
@@ -34,3 +53,66 @@ def reset_tokenizer_cache(monkeypatch: pytest.MonkeyPatch):
 
     monkeypatch.setattr(chunking, "_INIT_LOCK", threading.Lock())
     yield
+
+
+@pytest.fixture
+def mock_qdrant_clients(
+    mocker: MockerFixture, monkeypatch: pytest.MonkeyPatch
+) -> tuple[MagicMock, AsyncMock]:
+    mock_sync: MagicMock = mocker.MagicMock(spec=QdrantClient)
+    mock_async: AsyncMock = mocker.AsyncMock(spec=AsyncQdrantClient)
+
+    mock_async.collection_exists.return_value = False  # pyright: ignore[reportAny]
+    mock_async.create_collection.return_value = True  # pyright: ignore[reportAny]
+
+    mock_success = UpdateResult(operation_id=1, status=UpdateStatus.COMPLETED)
+    mock_async.create_payload_index.return_value = (  # pyright: ignore[reportAny]
+        mock_success
+    )
+    mock_async.delete.return_value = mock_success  # pyright: ignore[reportAny]
+
+    mock_sync_factory: Callable[..., QdrantClient] = lambda *a, **kw: mock_sync
+    mock_async_factory: Callable[..., AsyncQdrantClient] = lambda *a, **kw: mock_async
+
+    monkeypatch.setattr("backend.core.vector_store.QdrantClient", mock_sync_factory)
+    monkeypatch.setattr(
+        "backend.core.vector_store.AsyncQdrantClient", mock_async_factory
+    )
+
+    return mock_sync, mock_async
+
+
+@pytest.fixture
+def vector_store(
+    tmp_path: Path,
+    mocker: MockerFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> VectorStore:
+    monkeypatch.setattr(settings.vector_store, "url_or_path", tmp_path, raising=False)
+    monkeypatch.setattr(
+        settings.vector_store, "collection_name", "test_collection", raising=False
+    )
+    monkeypatch.setattr(settings.vector_store, "vector_size", 1536, raising=False)
+    monkeypatch.setattr(settings.vector_store, "ttl", 1, raising=False)
+    monkeypatch.setattr(settings.search, "search_type", "similarity", raising=False)
+
+    monkeypatch.setattr(
+        "backend.core.vector_store._get_huggingface_embeddings",
+        lambda: MockEmbeddings(),
+    )
+
+    vs = VectorStore.from_settings()
+
+    mock_lc_store = mocker.MagicMock(spec=QdrantVectorStore)
+
+    mock_lc_store.aadd_documents = mocker.AsyncMock(return_value=["mocked_id"])
+
+    mock_retriever = mocker.AsyncMock(spec=VectorStoreRetriever)
+    mock_retriever.ainvoke.return_value = []  # pyright: ignore[reportAny]
+    mock_lc_store.as_retriever.return_value = (  # pyright: ignore[reportAny]
+        mock_retriever
+    )
+
+    vs._vector_store = mock_lc_store  # pyright: ignore[reportPrivateUsage]
+
+    return vs
