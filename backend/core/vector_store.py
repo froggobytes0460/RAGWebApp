@@ -1,8 +1,11 @@
+# pyright: reportAny=false
+# pyright: reportExplicitAny=false
+
 import asyncio
 from datetime import datetime, timedelta, timezone
 from functools import lru_cache
 from pathlib import Path
-from typing import ClassVar, Literal, Self, cast
+from typing import Any, ClassVar, Literal, Self, cast
 
 from langchain_core.documents import Document
 from langchain_core.vectorstores.base import VectorStoreRetriever
@@ -40,7 +43,7 @@ def _get_huggingface_embeddings() -> HuggingFaceEmbeddings:
 
 class VectorStore(BaseModel):
     client: QdrantClient
-    async_client: AsyncQdrantClient
+    async_client: AsyncQdrantClient | None
 
     k: int = settings.search.top_k
     collection_name: str = settings.vector_store.collection_name
@@ -61,7 +64,7 @@ class VectorStore(BaseModel):
         )
         if isinstance(vectorstore_url_or_path, Path):
             client = QdrantClient(path=str(vectorstore_url_or_path))
-            async_client = AsyncQdrantClient(path=str(vectorstore_url_or_path))
+            async_client = None
         else:
             client = QdrantClient(url=str(vectorstore_url_or_path), api_key=api_key)
             async_client = AsyncQdrantClient(
@@ -79,28 +82,41 @@ class VectorStore(BaseModel):
             )
         return self._vector_store
 
+    async def _run_async(self, method_name: str, *args: Any, **kwargs: Any) -> Any:
+        if self.async_client:
+            method = getattr(self.async_client, method_name)
+            return await method(*args, **kwargs)
+
+        method = getattr(self.client, method_name)
+        return await asyncio.to_thread(method, *args, **kwargs)
+
     async def ainit_collection(
         self,
     ) -> dict[Literal["session_id", "uploaded_at"], UpdateResult]:
-        exists: bool = await self.async_client.collection_exists(
-            collection_name=self.collection_name
+        exists: bool = await self._run_async(
+            method_name="collection_exists", collection_name=self.collection_name
         )
+
         if not exists:
-            if not await self.async_client.create_collection(
+            created: bool = await self._run_async(
+                method_name="create_collection",
                 collection_name=self.collection_name,
                 vectors_config=VectorParams(
                     size=self.vector_size, distance=Distance.COSINE
                 ),
-            ):
+            )
+            if not created:
                 raise RuntimeError("Unable to initialize Qdrant collection.")
 
         session_id_res, uploaded_at_res = await asyncio.gather(
-            self.async_client.create_payload_index(
+            self._run_async(
+                method_name="create_payload_index",
                 collection_name=self.collection_name,
                 field_name="metadata.session_id",
                 field_schema=KeywordIndexParams(type=KeywordIndexType.KEYWORD),
             ),
-            self.async_client.create_payload_index(
+            self._run_async(
+                method_name="create_payload_index",
                 collection_name=self.collection_name,
                 field_name="metadata.uploaded_at",
                 field_schema=DatetimeIndexParams(type=DatetimeIndexType.DATETIME),
@@ -155,7 +171,8 @@ class VectorStore(BaseModel):
         )
 
     async def adelete_session(self, session_id: str) -> UpdateResult:
-        return await self.async_client.delete(
+        return await self._run_async(
+            method_name="delete",
             collection_name=self.collection_name,
             points_selector=Filter(
                 must=[
@@ -170,7 +187,8 @@ class VectorStore(BaseModel):
         cutoff = datetime.now(timezone.utc) - timedelta(
             seconds=settings.vector_store.ttl
         )
-        return await self.async_client.delete(
+        return await self._run_async(
+            method_name="delete",
             collection_name=self.collection_name,
             points_selector=Filter(
                 must=[
@@ -183,4 +201,4 @@ class VectorStore(BaseModel):
         )
 
     async def aclose(self) -> None:
-        await self.async_client.close()
+        await self._run_async(method_name="close")
