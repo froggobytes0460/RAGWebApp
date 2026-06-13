@@ -62,10 +62,19 @@ def mock_qdrant_clients(
     mock_sync: MagicMock = mocker.MagicMock(spec=QdrantClient)
     mock_async: AsyncMock = mocker.AsyncMock(spec=AsyncQdrantClient)
 
+    mock_sync.collection_exists.return_value = False  # pyright: ignore[reportAny]
+    mock_sync.create_collection.return_value = True  # pyright: ignore[reportAny]
+
     mock_async.collection_exists.return_value = False  # pyright: ignore[reportAny]
     mock_async.create_collection.return_value = True  # pyright: ignore[reportAny]
 
     mock_success = UpdateResult(operation_id=1, status=UpdateStatus.COMPLETED)
+
+    mock_sync.create_payload_index.return_value = (  # pyright: ignore[reportAny]
+        mock_success
+    )
+    mock_sync.delete.return_value = mock_success  # pyright: ignore[reportAny]
+
     mock_async.create_payload_index.return_value = (  # pyright: ignore[reportAny]
         mock_success
     )
@@ -82,13 +91,22 @@ def mock_qdrant_clients(
     return mock_sync, mock_async
 
 
-@pytest.fixture
+@pytest.fixture(params=["local_path", "remote_url"])
 def vector_store(
+    request: pytest.FixtureRequest,
     tmp_path: Path,
     mocker: MockerFixture,
     monkeypatch: pytest.MonkeyPatch,
 ) -> VectorStore:
-    monkeypatch.setattr(settings.vector_store, "url_or_path", tmp_path, raising=False)
+    target_path_or_url: Path | str = (
+        tmp_path
+        if request.param == "local_path"  # pyright: ignore[reportAny]
+        else "http://localhost:6333"
+    )
+
+    monkeypatch.setattr(
+        settings.vector_store, "url_or_path", target_path_or_url, raising=False
+    )
     monkeypatch.setattr(
         settings.vector_store, "collection_name", "test_collection", raising=False
     )
@@ -104,7 +122,6 @@ def vector_store(
     vs = VectorStore.from_settings()
 
     mock_lc_store = mocker.MagicMock(spec=QdrantVectorStore)
-
     mock_lc_store.aadd_documents = mocker.AsyncMock(return_value=["mocked_id"])
 
     mock_retriever = mocker.AsyncMock(spec=VectorStoreRetriever)

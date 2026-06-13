@@ -5,7 +5,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Common Development Commands
 
 - `uv sync`: Initialize or update Python environment
-- `uv run pytest -q --tb=short --no-header`: Run all unit tests
+- `uv run pytest -q --tb=short --no-header`: Run all unit tests, if any test fails, run that single unit test by adding the test name as argument and remove `--tb=short` from command
 - `uv run pre-commit install`: Install pre-commit hooks
 - `uv run pre-commit run --all-files`: Run pre-commit hooks manually
 

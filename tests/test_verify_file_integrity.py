@@ -1,5 +1,4 @@
 from pathlib import Path
-from typing import Never
 
 import pytest
 from pytest_mock import MockerFixture
@@ -8,7 +7,7 @@ from backend.core.ingest import verify_file_integrity
 
 
 def _write_file(path: Path, data: bytes) -> Path:
-    path.write_bytes(data)
+    _ = path.write_bytes(data)
     return path
 
 
@@ -20,7 +19,7 @@ def test_verify_pdf_valid(tmp_path: Path) -> None:
 def test_verify_pdf_invalid_signature(tmp_path: Path) -> None:
     pdf_path = _write_file(path=tmp_path / "invalid.pdf", data=b"NOTPDF")
     with pytest.raises(ValueError, match="File signature mismatch"):
-        verify_file_integrity(path=pdf_path)
+        _ = verify_file_integrity(path=pdf_path)
 
 
 def test_verify_docx_valid(tmp_path: Path) -> None:
@@ -31,7 +30,7 @@ def test_verify_docx_valid(tmp_path: Path) -> None:
 def test_verify_docx_invalid_signature(tmp_path: Path) -> None:
     docx_path = _write_file(path=tmp_path / "invalid.docx", data=b"NOTPK")
     with pytest.raises(ValueError, match="File signature mismatch"):
-        verify_file_integrity(path=docx_path)
+        _ = verify_file_integrity(path=docx_path)
 
 
 def test_verify_unreadable_file(tmp_path: Path, mocker: MockerFixture) -> None:
@@ -45,4 +44,4 @@ def test_verify_unreadable_file(tmp_path: Path, mocker: MockerFixture) -> None:
     )
 
     with pytest.raises(ValueError, match="File validation failed"):
-        verify_file_integrity(path=bad_path)
+        _ = verify_file_integrity(path=bad_path)
