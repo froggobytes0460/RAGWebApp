@@ -1,50 +1,31 @@
 # Python
 __pycache__/
-*.py[cod]
-*$py.class
+*.py[cd]
 *.so
 
-# Virtual environments
+# Virtual Environments
 .venv/
-venv/
-env/
-.env/
-
-# Distribution
-build/
-dist/
-*.egg-info/
-*.egg
-
-# IDE
-.idea/
-.vscode/
-*.swp
-*.swo
-
-# UV
 .uv/
 
-# Testing
+# IDE (VS Code)
+.vscode/
+
+# Testing & Coverage
 .pytest_cache/
 .coverage
 htmlcov/
-test-results/*
-tests/fixtures/ingest/large
+test-results/
 
-# OS
-.DS_Store
-Thumbs.db
-
-# Environment Variables
+# Environment Variables & Secrets
+.env
+.env.*
 **/.env
 **/.env.*
-**/*.env
-**/*.env.*
-
-## Track template .env file
 !.env.example
 
-# Vector Stores & Embedded Databases
-**/chroma_db/
-**/chroma_db*
+# Local Databases / Vectorstore
+.qdrant_local/
+
+# OS Specific
+.DS_Store
+Thumbs.db

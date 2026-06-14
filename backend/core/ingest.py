@@ -88,12 +88,11 @@ class DocumentIngestor(BaseModel):
         return self
 
     def _get_optimized_loader(self) -> DoclingLoader:
-        pdf_pipeline_options = PdfPipelineOptions()
-        pdf_pipeline_options.do_ocr = self.config.do_ocr
-        pdf_pipeline_options.do_table_structure = self.config.do_table_structure
-        pdf_pipeline_options.generate_page_images = self.config.generate_page_images
-        pdf_pipeline_options.generate_picture_images = (
-            self.config.generate_picture_images
+        pdf_pipeline_options = PdfPipelineOptions(
+            do_ocr=self.config.do_ocr,
+            do_table_structure=self.config.do_table_structure,
+            generate_page_images=self.config.generate_page_images,
+            generate_picture_images=self.config.generate_picture_images,
         )
 
         other_pipeline_options = ConvertPipelineOptions(

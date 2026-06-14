@@ -4,47 +4,56 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Common Development Commands
 
-- `uv sync`: Initialize or update Python environment
-- `uv run pytest -q --tb=short --no-header`: Run all unit tests
-- `uv run pre-commit install`: Install pre-commit hooks
-- `uv run pre-commit run --all-files`: Run pre-commit hooks manually
+- **Setup environment**: `uv sync`
+- **Install pre‑commit hooks**: `uv run pre-commit install`
+- **Run all tests**: `uv run pytest -q --tb=short --no-header`
+- **Run a single test**: `uv run pytest path/to/test_file.py::test_name`
+- **Run a single test file**: `uv run pytest tests/test_specific.py`
+- **Run pre‑commit checks**: `uv run pre-commit run --all-files`
+- **Lint / type‑check** (via pre‑commit): `uv run pre-commit run basedpyright --all-files`
 
-## High-Level Code Architecture
+## High‑Level Architecture
 
-This is a Python-based asynchronous RAG (Retrieval-Augmented Generation) web application with the following core components:
+The repository consists of several key modules:
 
-### Backend Core (`backend/core/`)
+- **`backend/core/config.py`** – Central configuration via Pydantic BaseSettings.
+- **`backend/core/ingest.py`** – Asynchronous document ingestion using Docling with binary‑head validation and optional OCR/table/image processing.
+- **`backend/core/chunking.py`** – Logic for splitting extracted text into retrieval‑ready chunks.
+- **`backend/core/vector_store.py`** – Async abstraction over vector‑store back‑ends (e.g., Qdrant, Chroma) handling upserts and similarity search.
+- **`tests/`** – Pytest suite covering ingestion, chunking, vector‑store integration, and file‑integrity verification.
 
-- **config.py**: Global Pydantic BaseSettings singleton for configuration management
-- **ingest.py**: Asynchronous Docling loader with file integrity validation and multi-format document extraction
+The project is an **asynchronous Python RAG web application** built around three logical layers:
 
-### Key Features
+1. **Configuration Layer** (`backend/core/config.py`)
+   - Central `BaseSettings` singleton using Pydantic for all environment variables.
+   - Provides typed access to API keys, vector store settings, and feature toggles.
 
-- **Asynchronous Multi-Format Ingestor**: Non-blocking document extraction using IBM's Docling pipeline
-- **Cryptographic Sandbox Protection**: Binary head validation to prevent extension spoofing attacks
-- **Granular Layout Toggles**: Configurable processing for OCR, table parsing, and image descriptions
+2. **Ingestion Layer** (`backend/core/ingest.py`)
+   - Uses IBM's **Docling** pipeline to extract text, tables, OCR, and image descriptions from many document formats.
+   - Performs **binary‑head validation** to stop extension‑spoofing attacks before parsing.
+   - Offers granular toggles (`enable_ocr`, `enable_tables`, `enable_image_desc`) to trade speed vs. fidelity.
 
-### Testing (`tests/`)
+3. **Vector Store / Retrieval Layer** (implemented in `backend/core/vectorstore/` – see the `feature/vectorstore` branch)
+   - Abstracts storage back‑ends (e.g., Qdrant, Chroma) behind a common async interface.
+   - Handles upserts, similarity search, and batch indexing.
 
-- **conftest.py**: Test configuration
-- **test_ingest.py**: Unit tests for ingestion functionality
-- **fixtures/ingest/**: Test data files for ingestion tests
+### Supporting Packages
 
-### Environment Configuration
-
-- `.env.example`: Template for environment variables
-- Configuration logic in `backend/core/config.py` defines all available settings
+- **`tests/`** – pytest suite with fixtures for ingestion examples.
+- **`.env.example`** – template for required environment variables.
+- **`pyproject.toml` / `uv.lock`** – dependency management via **uv**.
 
 ## Development Workflow
 
-1. Initialize environment: `uv sync`
-2. Set up environment: `cp .env.example .env`
-3. Install pre-commit hooks: `uv run pre-commit install`
-4. Run tests: `uv run pytest`
-5. Code changes are automatically validated on commit via pre-commit hooks
+1. **Initialize**: `uv sync`
+2. **Create env file**: `cp .env.example .env` and fill in required keys.
+3. **Install hooks**: `uv run pre-commit install`
+4. **Run the test suite**: `uv run pytest`
+5. **Iterate**: make changes → `uv run pre-commit run --all-files` → `uv run pytest`
+6. **Commit**: hooks enforce formatting and type‑checking automatically.
 
 ## Important Notes
 
-- Pre-commit hooks enforce code style and linting using `basedpyright`
-- The application is a prototype for a production RAG system
-- Document processing speed vs. fidelity can be balanced through configuration
+- Pre‑commit uses **basedpyright** for static type checking; failures must be resolved before committing.
+- The codebase is a **prototype**; expect placeholder implementations and TODOs in feature branches.
+- Vector‑store related code resides on the `feature/vectorstore` branch and may diverge from `main`.

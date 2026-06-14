@@ -42,7 +42,7 @@ jobs:
         run: cp .env.example .env
 
       - name: Run tests
-        run: uv run pytest -q --tb=short --no-header --cov-report=html
+        run: uv run pytest --cov-report=html
 
       - name: Publish Test Results
         uses: EnricoMi/publish-unit-test-result-action@v2

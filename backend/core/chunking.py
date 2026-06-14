@@ -18,7 +18,7 @@ def _get_cached_tokenizer() -> PreTrainedTokenizerBase:
     return cast(
         PreTrainedTokenizerBase,
         AutoTokenizer.from_pretrained(  # pyright: ignore[reportUnknownMemberType]
-            pretrained_model_name_or_path=settings.vector_store.tokenizer_model
+            pretrained_model_name_or_path=settings.text_chunk.tokenizer_model
         ),
     )
 
@@ -33,7 +33,9 @@ class TextChunker:
                 if cls._recursive_text_splitter is None:
                     cls._recursive_text_splitter = (
                         RecursiveCharacterTextSplitter.from_huggingface_tokenizer(
-                            tokenizer=_get_cached_tokenizer()
+                            tokenizer=_get_cached_tokenizer(),
+                            chunk_size=settings.text_chunk.chunk_size,
+                            chunk_overlap=settings.text_chunk.chunk_overlap,
                         )
                     )
         return cls._recursive_text_splitter

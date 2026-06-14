@@ -23,6 +23,18 @@ dev = [
     "pytest>=9.0.3",
     "pytest-asyncio>=1.4.0",
     "pytest-cov>=7.1.0",
+    "pytest-mock>=3.15.1",
+]
+
+[tool.basedpyright]
+exclude = [
+   ".venv",
+    "**/__pycache__",
+    "htmlcov",
+    "test-results",
+    "tests/fixtures",
+    "README.md",
+    "**/*.pyc"
 ]
 
 [tool.black]
@@ -35,10 +47,6 @@ packages = ["backend"]
 asyncio_mode = "auto"
 testpaths = ["tests"]
 addopts = "--cov=backend --cov-report=term-missing --cov-fail-under=80 --junitxml=test-results/junit.xml"
-filterwarnings = [
-    "ignore:This field is deprecated. Use `generate_page_images=True`:DeprecationWarning:docling.*",
-    "ignore:deprecated:DeprecationWarning:rapidocr.*",
-]
 
 [build-system]
 requires = ["hatchling"]
