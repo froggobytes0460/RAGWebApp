@@ -42,6 +42,8 @@ def _get_huggingface_embeddings() -> HuggingFaceEmbeddings:
 
 
 class VectorStore(BaseModel):
+    """Vector store interface for RAG web application."""
+
     client: QdrantClient
     async_client: AsyncQdrantClient | None
 

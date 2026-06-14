@@ -1,7 +1,7 @@
 from unittest.mock import AsyncMock, MagicMock
 
 from langchain_core.documents import Document
-from qdrant_client.models import UpdateStatus
+from qdrant_client.models import UpdateStatus, UpdateResult
 
 from backend.core.vector_store import VectorStore
 
@@ -22,6 +22,8 @@ async def test_collection_initialisation(
     assert "session_id" in result
     assert "uploaded_at" in result
     active_mock.create_collection.assert_called_once()  # pyright: ignore[reportAny]
+    assert isinstance(result["session_id"], UpdateResult)
+    assert isinstance(result["uploaded_at"], UpdateResult)
 
 
 async def test_insert_and_retrieve(vector_store: VectorStore) -> None:

@@ -62,23 +62,26 @@ def mock_qdrant_clients(
     mock_sync: MagicMock = mocker.MagicMock(spec=QdrantClient)
     mock_async: AsyncMock = mocker.AsyncMock(spec=AsyncQdrantClient)
 
-    mock_sync.collection_exists.return_value = False  # pyright: ignore[reportAny]
-    mock_sync.create_collection.return_value = True  # pyright: ignore[reportAny]
+    mock_sync.collection_exists = mocker.MagicMock(return_value=False)
+    mock_async.collection_exists = mocker.AsyncMock(return_value=False)
 
-    mock_async.collection_exists.return_value = False  # pyright: ignore[reportAny]
-    mock_async.create_collection.return_value = True  # pyright: ignore[reportAny]
+    # Creation should succeed
+    mock_sync.create_collection = mocker.MagicMock(return_value=True)
+    mock_async.create_collection = mocker.AsyncMock(return_value=True)
 
+    # Mock close methods for proper cleanup assertions
+    mock_sync.close = mocker.MagicMock()
+    mock_async.close = mocker.AsyncMock()
+
+    # Mock payload index operations
     mock_success = UpdateResult(operation_id=1, status=UpdateStatus.COMPLETED)
 
-    mock_sync.create_payload_index.return_value = (  # pyright: ignore[reportAny]
-        mock_success
-    )
-    mock_sync.delete.return_value = mock_success  # pyright: ignore[reportAny]
+    mock_sync.create_payload_index = mocker.MagicMock(return_value=mock_success)
+    mock_async.create_payload_index = mocker.AsyncMock(return_value=mock_success)
 
-    mock_async.create_payload_index.return_value = (  # pyright: ignore[reportAny]
-        mock_success
-    )
-    mock_async.delete.return_value = mock_success  # pyright: ignore[reportAny]
+    # Mock delete operations
+    mock_sync.delete = mocker.MagicMock(return_value=mock_success)
+    mock_async.delete = mocker.AsyncMock(return_value=mock_success)
 
     mock_sync_factory: Callable[..., QdrantClient] = lambda *a, **kw: mock_sync
     mock_async_factory: Callable[..., AsyncQdrantClient] = lambda *a, **kw: mock_async
@@ -97,6 +100,7 @@ def vector_store(
     tmp_path: Path,
     mocker: MockerFixture,
     monkeypatch: pytest.MonkeyPatch,
+    mock_qdrant_clients: tuple[MagicMock, AsyncMock],
 ) -> VectorStore:
     target_path_or_url: Path | str = (
         tmp_path
@@ -119,7 +123,11 @@ def vector_store(
         lambda: MockEmbeddings(),
     )
 
-    vs = VectorStore.from_settings()
+    mock_sync, mock_async = mock_qdrant_clients
+    vs = VectorStore(
+        client=mock_sync,
+        async_client=mock_async if request.param == "remote_url" else None,
+    )
 
     mock_lc_store = mocker.MagicMock(spec=QdrantVectorStore)
     mock_lc_store.aadd_documents = mocker.AsyncMock(return_value=["mocked_id"])
