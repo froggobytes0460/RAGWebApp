@@ -219,7 +219,7 @@ class Settings(BaseSettings):
     )
 
     GROQ_API_KEY_PATTERN: ClassVar[str] = r"^gsk_[a-zA-Z0-9]{48,64}$"
-    QDRANT_API_KEY_PATTERN: ClassVar[str] = r"^[A-Za-z0-9+/]{30,128}==?$"
+    QDRANT_API_KEY_PATTERN: ClassVar[str] = r"^[A-Za-z0-9+/]{43,44}=?$"
 
     @field_validator("groq_api_key")
     @classmethod
@@ -256,3 +256,37 @@ class Settings(BaseSettings):
 
 settings = Settings()  # pyright: ignore[reportCallIssue]
 """Singleton setting pattern"""
+
+"""
+{
+  "regex": {
+    "pattern": "^[A-Za-z0-9+/]{30,128}==?$",
+    "flags": "",
+    "isValid": true
+  },
+  "generatedStrings": [
+    "wU625Ki/o17r/1Lwt1iLwnb5//Of+rGYj9kKhEY45yL5IkMvXQDjgKS9jsAlQb8PsOU87vHNEw5DGxoWWyHeBuTw6Qa00R==",
+    "KDedJYNq/Z71yjfkoK31WjMz8GeoQqeKkLoq2KDY==",
+    "Q/MrP0TvGXHBzFt2uinCGcakduGYNuUByKV9gzF+wFNyHjPYEoA+Ro1yNQtBp5jO2KQ9iMIWq5==",
+    "G4qu86VilUCDfHioXX9IDUaSRL4kwnoKxWWs3YlDcFyC0SLTCRYrlt3ybecATnEPDHk87SnqMVp1/q/MKFACJT8Z3GGW6t/EYmesCPsBvkERW5+YYcEi=",
+    "H17QvrQt3925lSq+pyMzllnFyT7Lqw+ZyWrYhwycww26LMg/v3lW1T6gzth42Gq6DvdYPsoUuQMnidnm8eMcdYKCa6MoVtk2gCJMpWEg6bEDxYmyoDjl="
+  ],
+  "stats": {
+    "totalGenerated": 5,
+    "requestedCount": 5,
+    "uniqueCount": 5,
+    "averageLength": 89.6,
+    "minLength": 42,
+    "maxLength": 117
+  },
+  "validation": {
+    "allValid": true,
+    "invalidCount": 0,
+    "invalidStrings": []
+  },
+  "metadata": {
+    "generatedAt": "2026-06-14T08:00:26.815Z",
+    "maxLengthSetting": 100
+  }
+}
+"""
