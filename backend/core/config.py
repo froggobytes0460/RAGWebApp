@@ -56,7 +56,7 @@ class VectorStoreSettings(BaseModel):
     collection_name: Annotated[
         str,
         Field(
-            description="The target collection segment name inside the Chroma database instance."
+            description="The target collection segment name inside the Qdrant database instance."
         ),
     ] = "rag_documents"
 
@@ -91,7 +91,7 @@ class VectorStoreSettings(BaseModel):
 
     vector_size: Annotated[
         int, Field(ge=384, description="Size of embedding vectors.")
-    ] = 1024
+    ] = 384
 
     @field_validator("url_or_path")
     @classmethod

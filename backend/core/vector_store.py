@@ -11,10 +11,10 @@ from langchain_core.documents import Document
 from langchain_core.vectorstores import VectorStoreRetriever
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_qdrant import QdrantVectorStore
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, PrivateAttr
 from qdrant_client import AsyncQdrantClient, QdrantClient
-from qdrant_client.conversions import common_types
 from qdrant_client import models
+from qdrant_client.conversions import common_types
 
 from backend.core.config import settings
 from backend.core.ingest import StrictMetadata
@@ -41,7 +41,7 @@ class VectorStore(BaseModel):
     vector_size: int = settings.vector_store.vector_size
     ttl: int = settings.vector_store.ttl
 
-    _vector_store: QdrantVectorStore | None = None
+    _vector_store: QdrantVectorStore | None = PrivateAttr(default=None)
 
     model_config: ClassVar[ConfigDict] = ConfigDict(arbitrary_types_allowed=True)
 
