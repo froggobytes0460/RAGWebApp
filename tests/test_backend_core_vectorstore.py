@@ -1,7 +1,7 @@
 from unittest.mock import AsyncMock, MagicMock
 
 from langchain_core.documents import Document
-from qdrant_client.models import UpdateStatus, UpdateResult
+from qdrant_client import models
 
 from backend.core.vector_store import VectorStore
 
@@ -22,8 +22,8 @@ async def test_collection_initialisation(
     assert "session_id" in result
     assert "uploaded_at" in result
     active_mock.create_collection.assert_called_once()  # pyright: ignore[reportAny]
-    assert isinstance(result["session_id"], UpdateResult)
-    assert isinstance(result["uploaded_at"], UpdateResult)
+    assert isinstance(result["session_id"], models.UpdateResult)
+    assert isinstance(result["uploaded_at"], models.UpdateResult)
 
 
 async def test_insert_and_retrieve(vector_store: VectorStore) -> None:
@@ -71,7 +71,7 @@ async def test_cleanup_stale_vectors(
 
     result = await vector_store.aclean_up_stale_vectors()
 
-    assert result.status == UpdateStatus.COMPLETED
+    assert result.status == models.UpdateStatus.COMPLETED
     active_mock.delete.assert_called_once()  # pyright: ignore[reportAny]
 
 
@@ -83,3 +83,63 @@ async def test_close(
     await vector_store.aclose()
 
     active_mock.close.assert_called_once()  # pyright: ignore[reportAny]
+
+
+async def test_list_documents(
+    vector_store: VectorStore, mock_qdrant_clients: tuple[MagicMock, AsyncMock]
+) -> None:
+    active_mock = _get_active_mock(vector_store, mock_qdrant_clients)
+    _ = await vector_store.ainit_collection()
+
+    session_id = "test-session-list"
+    mock_timestamp = "2026-06-15T13:34:00Z"
+
+    mock_records = [
+        models.Record(
+            id=1,
+            payload={
+                "metadata": {"filename": "report.pdf", "uploaded_at": mock_timestamp}
+            },
+        ),
+        models.Record(
+            id=2,
+            payload={
+                "metadata": {"filename": "report.pdf", "uploaded_at": mock_timestamp}
+            },
+        ),
+        models.Record(
+            id=3,
+            payload={
+                "metadata": {"filename": "notes.txt", "uploaded_at": mock_timestamp}
+            },
+        ),
+    ]
+
+    active_mock.scroll.return_value = (mock_records, None)  # pyright: ignore[reportAny]
+
+    documents = await vector_store.alist_documents(session_id=session_id)
+
+    active_mock.scroll.assert_called_once()  # pyright: ignore[reportAny]
+    assert len(documents) == 2
+
+    filenames = [doc["filename"] for doc in documents]
+    assert "report.pdf" in filenames
+    assert "notes.txt" in filenames
+    assert documents[0]["uploaded_at"] == mock_timestamp
+
+
+async def test_delete_document(
+    vector_store: VectorStore, mock_qdrant_clients: tuple[MagicMock, AsyncMock]
+) -> None:
+    active_mock = _get_active_mock(vector_store, mock_qdrant_clients)
+    _ = await vector_store.ainit_collection()
+
+    session_id = "test-session-delete"
+    filename = "stale_data.pdf"
+
+    result = await vector_store.adelete_document(
+        session_id=session_id, filename=filename
+    )
+
+    active_mock.delete.assert_called_once()  # pyright: ignore[reportAny]
+    assert isinstance(result, models.UpdateResult)

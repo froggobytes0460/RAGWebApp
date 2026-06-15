@@ -8,24 +8,13 @@ from pathlib import Path
 from typing import Any, ClassVar, Literal, Self, cast
 
 from langchain_core.documents import Document
-from langchain_core.vectorstores.base import VectorStoreRetriever
+from langchain_core.vectorstores import VectorStoreRetriever
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_qdrant import QdrantVectorStore
 from pydantic import BaseModel, ConfigDict
 from qdrant_client import AsyncQdrantClient, QdrantClient
-from qdrant_client.conversions.common_types import UpdateResult
-from qdrant_client.models import (
-    DatetimeIndexParams,
-    DatetimeIndexType,
-    DatetimeRange,
-    Distance,
-    FieldCondition,
-    Filter,
-    KeywordIndexParams,
-    KeywordIndexType,
-    MatchValue,
-    VectorParams,
-)
+from qdrant_client.conversions import common_types
+from qdrant_client import models
 
 from backend.core.config import settings
 from backend.core.ingest import StrictMetadata
@@ -94,7 +83,7 @@ class VectorStore(BaseModel):
 
     async def ainit_collection(
         self,
-    ) -> dict[Literal["session_id", "uploaded_at"], UpdateResult]:
+    ) -> dict[Literal["session_id", "uploaded_at"], models.UpdateResult]:
         exists: bool = await self._run_async(
             method_name="collection_exists", collection_name=self.collection_name
         )
@@ -103,8 +92,8 @@ class VectorStore(BaseModel):
             created: bool = await self._run_async(
                 method_name="create_collection",
                 collection_name=self.collection_name,
-                vectors_config=VectorParams(
-                    size=self.vector_size, distance=Distance.COSINE
+                vectors_config=models.VectorParams(
+                    size=self.vector_size, distance=models.Distance.COSINE
                 ),
             )
             if not created:
@@ -115,13 +104,17 @@ class VectorStore(BaseModel):
                 method_name="create_payload_index",
                 collection_name=self.collection_name,
                 field_name="metadata.session_id",
-                field_schema=KeywordIndexParams(type=KeywordIndexType.KEYWORD),
+                field_schema=models.KeywordIndexParams(
+                    type=models.KeywordIndexType.KEYWORD
+                ),
             ),
             self._run_async(
                 method_name="create_payload_index",
                 collection_name=self.collection_name,
                 field_name="metadata.uploaded_at",
-                field_schema=DatetimeIndexParams(type=DatetimeIndexType.DATETIME),
+                field_schema=models.DatetimeIndexParams(
+                    type=models.DatetimeIndexType.DATETIME
+                ),
             ),
         )
 
@@ -149,12 +142,13 @@ class VectorStore(BaseModel):
     def get_retriever(
         self, session_id: str, k: int | None = None
     ) -> VectorStoreRetriever:
-        search_kwargs: dict[str, int | Filter | float] = {
+        search_kwargs: dict[str, int | models.Filter | float] = {
             "k": k or self.k,
-            "filter": Filter(
+            "filter": models.Filter(
                 must=[
-                    FieldCondition(
-                        key="metadata.session_id", match=MatchValue(value=session_id)
+                    models.FieldCondition(
+                        key="metadata.session_id",
+                        match=models.MatchValue(value=session_id),
                     )
                 ]
             ),
@@ -172,35 +166,99 @@ class VectorStore(BaseModel):
             search_kwargs=search_kwargs,
         )
 
-    async def adelete_session(self, session_id: str) -> UpdateResult:
+    async def adelete_session(self, session_id: str) -> models.UpdateResult:
         return await self._run_async(
             method_name="delete",
             collection_name=self.collection_name,
-            points_selector=Filter(
+            points_selector=models.Filter(
                 must=[
-                    FieldCondition(
-                        key="metadata.session_id", match=MatchValue(value=session_id)
+                    models.FieldCondition(
+                        key="metadata.session_id",
+                        match=models.MatchValue(value=session_id),
                     )
                 ]
             ),
         )
 
-    async def aclean_up_stale_vectors(self) -> UpdateResult:
-        cutoff = datetime.now(timezone.utc) - timedelta(
+    async def adelete_document(
+        self, session_id: str, filename: str
+    ) -> models.UpdateResult:
+        return await self._run_async(
+            method_name="delete",
+            collection_name=self.collection_name,
+            points_selector=models.Filter(
+                must=[
+                    models.FieldCondition(
+                        key="metadata.session_id",
+                        match=models.MatchValue(value=session_id),
+                    ),
+                    models.FieldCondition(
+                        key="metadata.filename", match=models.MatchValue(value=filename)
+                    ),
+                ]
+            ),
+        )
+
+    async def aclean_up_stale_vectors(self) -> models.UpdateResult:
+        cutoff = datetime.now(tz=timezone.utc) - timedelta(
             seconds=settings.vector_store.ttl
         )
         return await self._run_async(
             method_name="delete",
             collection_name=self.collection_name,
-            points_selector=Filter(
+            points_selector=models.Filter(
                 must=[
-                    FieldCondition(
+                    models.FieldCondition(
                         key="metadata.uploaded_at",
-                        range=DatetimeRange(lt=cutoff),
+                        range=models.DatetimeRange(lt=cutoff),
                     )
                 ]
             ),
         )
+
+    async def alist_documents(self, session_id: str) -> list[dict[str, str]]:
+        response: tuple[list[models.Record], common_types.PointId | None] = (
+            await self._run_async(
+                method_name="scroll",
+                collection_name=self.collection_name,
+                scroll_filter=models.Filter(
+                    must=[
+                        models.FieldCondition(
+                            key="metadata.session_id",
+                            match=models.MatchValue(value=session_id),
+                        )
+                    ]
+                ),
+                limit=1000,
+                with_payload=models.PayloadSelectorInclude(
+                    include=["metadata.filename", "metadata.uploaded_at"]
+                ),
+                with_vectors=False,
+            )
+        )
+
+        records, _ = response
+        unique_files: dict[str, str] = {}
+
+        for record in records:
+            payload = record.payload or {}
+            meta = payload.get("metadata", {})
+            if isinstance(meta, dict):
+                filename = cast(
+                    Any,
+                    meta.get("filename"),  # pyright: ignore[reportUnknownMemberType]
+                )
+                uploaded_at = cast(
+                    Any,
+                    meta.get("uploaded_at"),  # pyright: ignore[reportUnknownMemberType]
+                )
+                if isinstance(filename, str) and isinstance(uploaded_at, str):
+                    unique_files[filename] = uploaded_at
+
+        return [
+            {"filename": fname, "uploaded_at": uploaded}
+            for fname, uploaded in unique_files.items()
+        ]
 
     async def aclose(self) -> None:
         await self._run_async(method_name="close")
