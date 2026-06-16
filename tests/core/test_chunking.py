@@ -1,3 +1,5 @@
+# pyright: reportPrivateUsage=none
+
 from collections.abc import Callable
 import threading
 import time
@@ -9,10 +11,7 @@ from langchain_text_splitters import TextSplitter
 from pytest_mock import MockerFixture
 from transformers import PreTrainedTokenizerBase
 
-from backend.core.chunking import (
-    TextChunker,
-    _get_cached_tokenizer,  # pyright: ignore[reportPrivateUsage]
-)
+from backend.core.chunking import TextChunker, _get_cached_tokenizer
 
 
 class TestTokenizerCache:
@@ -68,9 +67,7 @@ class TestTextChunker:
         _ = mocker.patch("backend.core.chunking._get_cached_tokenizer")
 
         threads: list[threading.Thread] = [
-            threading.Thread(
-                target=TextChunker._get_splitter_recursive  # pyright: ignore[reportPrivateUsage]
-            )
+            threading.Thread(target=TextChunker._get_splitter_recursive)
             for _ in range(5)
         ]
         for t in threads:
@@ -79,7 +76,4 @@ class TestTextChunker:
             t.join()
 
         assert mock_splitter_ctor.call_count == 1
-        assert (
-            TextChunker._recursive_text_splitter  # pyright: ignore[reportPrivateUsage]
-            is dummy_splitter_instance
-        )
+        assert TextChunker._recursive_text_splitter is dummy_splitter_instance

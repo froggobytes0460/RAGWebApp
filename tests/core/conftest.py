@@ -1,7 +1,9 @@
+# pyright: reportPrivateUsage=none
+
 from collections.abc import Callable
 from pathlib import Path
 import threading
-from typing import override
+from typing import Any, override
 from unittest.mock import AsyncMock, MagicMock
 
 from langchain_core.embeddings import Embeddings
@@ -13,11 +15,9 @@ from qdrant_client import AsyncQdrantClient, QdrantClient
 from qdrant_client.models import UpdateResult, UpdateStatus
 
 from backend.core import chunking
-from backend.core.chunking import (
-    TextChunker,
-    _get_cached_tokenizer,  # pyright: ignore[reportPrivateUsage]
-)
+from backend.core.chunking import TextChunker, _get_cached_tokenizer
 from backend.core.config import IngestSettings, settings
+from backend.core.llms.groq import LLMGroqClient
 from backend.core.vector_store import VectorStore
 
 
@@ -49,7 +49,7 @@ def fast_ingest_config() -> IngestSettings:
 def reset_tokenizer_cache(monkeypatch: pytest.MonkeyPatch):
     """Clear the lru_cache and reset class variables before each test."""
     _get_cached_tokenizer.cache_clear()
-    TextChunker._recursive_text_splitter = None  # pyright: ignore[reportPrivateUsage]
+    TextChunker._recursive_text_splitter = None
 
     monkeypatch.setattr(chunking, "_INIT_LOCK", threading.Lock())
     yield
@@ -134,6 +134,6 @@ def vector_store(
         mock_retriever
     )
 
-    vs._vector_store = mock_lc_store  # pyright: ignore[reportPrivateUsage]
+    vs._vector_store = mock_lc_store
 
     return vs

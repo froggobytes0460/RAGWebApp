@@ -1,4 +1,4 @@
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Sequence
 from typing import Annotated, Any, ClassVar, Self
 
 from openrouter import errors
@@ -58,10 +58,10 @@ class LLMOpenRouterClient(BaseModel):
         self,
         documents: list[Document],
         question: str,
-        chat_history: list[BaseMessage] | None = None,
+        chat_history: Sequence[BaseMessage] | None = None,
     ) -> AsyncIterator[str]:
         context = "\n\n".join(doc.page_content for doc in documents)
-        payload: dict[str, str | list[BaseMessage]] = {
+        payload: dict[str, str | Sequence[BaseMessage]] = {
             "context": context,
             "question": question,
             "chat_history": chat_history or [],
@@ -81,7 +81,7 @@ class LLMOpenRouterClient(BaseModel):
 
         async for attempt in retrier:
             with attempt:
-                stream = self.runnable_lcel.astream(input=payload)
+                stream = self.runnable_lcel.astream(payload)
                 first_chunk = await stream.__anext__()
 
         if first_chunk and first_chunk.content:

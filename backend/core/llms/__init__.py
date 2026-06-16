@@ -1,4 +1,4 @@
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Sequence
 from typing import Callable, ClassVar, Protocol, Self, runtime_checkable
 
 from langchain_core.documents import Document
@@ -20,7 +20,7 @@ class LLMClientProto(Protocol):
         self,
         documents: list[Document],
         question: str,
-        chat_history: list[BaseMessage] | None = None,
+        chat_history: Sequence[BaseMessage] | None = None,
     ) -> AsyncIterator[str]: ...
 
 
