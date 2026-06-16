@@ -221,7 +221,7 @@ class LLMSettings(BaseModel):
     model_name: Annotated[str, Field(description="Name of LLM model used from Groq.")]
 
     provider: Annotated[
-        Literal["groq"],
+        Literal["groq", "openrouter"],
         Field(description="LLM provider. Determines which client is instantiated."),
     ] = "groq"
 
