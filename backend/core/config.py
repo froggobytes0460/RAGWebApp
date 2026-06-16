@@ -53,6 +53,12 @@ class IngestSettings(BaseModel):
 class VectorStoreSettings(BaseModel):
     """Settings for vector store."""
 
+    QDRANT_API_KEY_PATTERN: ClassVar[str] = r"^[A-Za-z0-9+/]{43,44}=?$"
+
+    api_key: Annotated[
+        SecretStr | None, Field(description="API key for connecting to Qdrant Cloud.")
+    ] = None
+
     collection_name: Annotated[
         str,
         Field(
@@ -92,6 +98,28 @@ class VectorStoreSettings(BaseModel):
     vector_size: Annotated[
         int, Field(ge=384, description="Size of embedding vectors.")
     ] = 384
+
+    @model_validator(mode="after")
+    def validate_qdrant_auth(self) -> Self:
+        url_or_path = self.url_or_path
+
+        if not isinstance(url_or_path, Path):
+            host = url_or_path.host or ""
+
+            if "qdrant.tech" in host:
+                if not self.api_key:
+                    raise ValueError(
+                        f"A 'qdrant_api_key' is required when connecting to Qdrant Cloud cluster ({host})."
+                    )
+
+                if not re.match(
+                    self.QDRANT_API_KEY_PATTERN, self.api_key.get_secret_value()
+                ):
+                    raise ValueError(
+                        "The provided 'qdrant_api_key' does not match the strict Qdrant Cloud pattern requirement."
+                    )
+
+        return self
 
     @field_validator("url_or_path")
     @classmethod
@@ -172,6 +200,12 @@ class SearchSettings(BaseModel):
 class LLMSettings(BaseModel):
     """Settings for LLM."""
 
+    api_key: Annotated[SecretStr, Field(description="API key for LLM provider.")]
+
+    max_retries: Annotated[
+        int, Field(description="Maximum retries on LLM output generation.", gt=0)
+    ] = 3
+
     temperature: Annotated[
         float,
         Field(
@@ -181,25 +215,19 @@ class LLMSettings(BaseModel):
         ),
     ] = 0.2
 
-    top_p: Annotated[
-        float, Field(ge=0.1, le=1, description="Predictablity of LLM output.")
-    ]
     max_output_token: Annotated[
         int, Field(ge=1, description="Maximum tokens of LLM output.")
     ]
     model_name: Annotated[str, Field(description="Name of LLM model used from Groq.")]
 
+    provider: Annotated[
+        Literal["groq"],
+        Field(description="LLM provider. Determines which client is instantiated."),
+    ] = "groq"
+
 
 class Settings(BaseSettings):
     """Global settings parsed from environment variables."""
-
-    groq_api_key: Annotated[
-        SecretStr, Field(description="API key for Groq LLM provider.")
-    ]
-
-    qdrant_api_key: Annotated[
-        SecretStr | None, Field(description="API key for connecting to Qdrant Cloud.")
-    ] = None
 
     vector_store: VectorStoreSettings
 
@@ -217,41 +245,6 @@ class Settings(BaseSettings):
         extra="ignore",
         frozen=True,
     )
-
-    GROQ_API_KEY_PATTERN: ClassVar[str] = r"^gsk_[a-zA-Z0-9]{48,64}$"
-    QDRANT_API_KEY_PATTERN: ClassVar[str] = r"^[A-Za-z0-9+/]{43,44}=?$"
-
-    @field_validator("groq_api_key")
-    @classmethod
-    def validate_groq_api_key_prefix(cls, v: SecretStr) -> SecretStr:
-        if not re.match(cls.GROQ_API_KEY_PATTERN, v.get_secret_value()):
-            raise ValueError(
-                f"Groq API key must fit the regex expression: {cls.GROQ_API_KEY_PATTERN}"
-            )
-
-        return v
-
-    @model_validator(mode="after")
-    def validate_qdrant_auth(self) -> Self:
-        url_or_path = self.vector_store.url_or_path
-
-        if not isinstance(url_or_path, Path):
-            host = url_or_path.host or ""
-
-            if "qdrant.tech" in host:
-                if not self.qdrant_api_key:
-                    raise ValueError(
-                        f"A 'qdrant_api_key' is required when connecting to Qdrant Cloud cluster ({host})."
-                    )
-
-                if not re.match(
-                    self.QDRANT_API_KEY_PATTERN, self.qdrant_api_key.get_secret_value()
-                ):
-                    raise ValueError(
-                        "The provided 'qdrant_api_key' does not match the strict Qdrant Cloud pattern requirement."
-                    )
-
-        return self
 
 
 settings = Settings()  # pyright: ignore[reportCallIssue]
