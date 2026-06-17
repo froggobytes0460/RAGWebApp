@@ -1,4 +1,5 @@
 # pyright: reportExplicitAny=none
+# pyright: reportUnknownLambdaType=none
 
 from collections.abc import AsyncIterator, Callable
 from typing import Any, Never
@@ -133,11 +134,10 @@ def groq_client_with_runnable(
 class TestLLMGroqClientAstreamResponse:
     async def test_yields_content_from_chunks(
         self,
-        mocker: MockerFixture,
         groq_client_with_runnable: Callable[[Any], tuple[LLMGroqClient, MagicMock]],
     ) -> None:
         chunks = [_make_chunk("Hello"), _make_chunk(" world")]
-        client, _ = groq_client_with_runnable(lambda _: _async_gen(*chunks))
+        client, _ = groq_client_with_runnable(lambda _input: _async_gen(*chunks))
 
         results = [
             c
@@ -149,11 +149,10 @@ class TestLLMGroqClientAstreamResponse:
 
     async def test_skips_empty_content_chunks(
         self,
-        mocker: MockerFixture,
         groq_client_with_runnable: Callable[[Any], tuple[LLMGroqClient, MagicMock]],
     ) -> None:
         chunks = [_make_chunk(""), _make_chunk("data"), _make_chunk("")]
-        client, _ = groq_client_with_runnable(lambda _: _async_gen(*chunks))
+        client, _ = groq_client_with_runnable(lambda _input: _async_gen(*chunks))
 
         results = [
             c
@@ -272,7 +271,7 @@ class TestLLMGroqClientAstreamResponse:
         client, _ = groq_client_with_runnable(flaky_astream)
         _ = mocker.patch(
             "backend.core.llms.groq.wait_exponential_jitter",
-            return_value=lambda _: 0,  # pyright: ignore[reportUnknownLambdaType]
+            return_value=lambda _: 0,
         )
         monkeypatch.setattr(settings.llm, "max_retries", 3, raising=False)
 

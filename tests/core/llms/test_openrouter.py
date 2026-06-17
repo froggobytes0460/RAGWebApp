@@ -1,4 +1,5 @@
 # pyright: reportExplicitAny=none
+# pyright: reportUnknownLambdaType=none
 
 from collections.abc import AsyncIterator
 from typing import Any, Never
@@ -121,7 +122,7 @@ class TestLLMOpenRouterClientAstreamResponse:
     async def test_yields_content_from_chunks(self, mocker: MockerFixture) -> None:
         chunks = [_make_chunk(content="foo"), _make_chunk(content="bar")]
         mock_runnable = mocker.MagicMock()
-        mock_runnable.astream = lambda _: _async_gen(*chunks)
+        mock_runnable.astream = lambda _input: _async_gen(*chunks)
 
         client = _mock_openrouter_client(mocker)
         _ = mocker.patch.object(
@@ -143,7 +144,7 @@ class TestLLMOpenRouterClientAstreamResponse:
     async def test_skips_empty_content_chunks(self, mocker: MockerFixture) -> None:
         chunks = [_make_chunk(""), _make_chunk("real"), _make_chunk("")]
         mock_runnable = mocker.MagicMock()
-        mock_runnable.astream = lambda _: _async_gen(*chunks)
+        mock_runnable.astream = lambda _input: _async_gen(*chunks)
 
         client = _mock_openrouter_client(mocker)
         _ = mocker.patch.object(
@@ -320,7 +321,7 @@ class TestLLMOpenRouterClientAstreamResponse:
         )
         _ = mocker.patch(
             "backend.core.llms.openrouter.wait_exponential_jitter",
-            return_value=lambda _: 0,  # pyright: ignore[reportUnknownLambdaType]
+            return_value=lambda _: 0,
         )
         monkeypatch.setattr(settings.llm, "max_retries", 3, raising=False)
 
