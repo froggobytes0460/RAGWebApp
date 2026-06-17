@@ -119,7 +119,7 @@ class MessageView:
                     chat_history=chat_history,
                 ):
                     answer_parts.append(text)
-                    payload = StreamChunk(text=text).model_dump_json()
+                    payload = StreamChunk(text=text).model_dump_json(exclude_none=True)
                     yield f"event: chunk\ndata: {payload}\n\n"
 
                 answer = "".join(answer_parts)

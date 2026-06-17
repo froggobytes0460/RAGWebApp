@@ -11,7 +11,7 @@ from backend.core.config import settings
 @lru_cache(maxsize=1)
 def get_engine() -> AsyncEngine:
     return create_async_engine(
-        url=settings.database.url,
+        url=str(settings.database.url),
         echo=settings.database.echo_sql,
     )
 
