@@ -1,4 +1,6 @@
-from collections.abc import Callable
+# pyright: reportPrivateUsage=none
+
+from collections.abc import AsyncGenerator, Callable
 from pathlib import Path
 import threading
 from typing import override
@@ -11,12 +13,12 @@ import pytest
 from pytest_mock import MockerFixture
 from qdrant_client import AsyncQdrantClient, QdrantClient
 from qdrant_client.models import UpdateResult, UpdateStatus
+from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
+from sqlmodel import SQLModel
+from sqlmodel.ext.asyncio.session import AsyncSession
 
 from backend.core import chunking
-from backend.core.chunking import (
-    TextChunker,
-    _get_cached_tokenizer,  # pyright: ignore[reportPrivateUsage]
-)
+from backend.core.chunking import TextChunker, _get_cached_tokenizer
 from backend.core.config import IngestSettings, settings
 from backend.core.vector_store import VectorStore
 
@@ -49,7 +51,7 @@ def fast_ingest_config() -> IngestSettings:
 def reset_tokenizer_cache(monkeypatch: pytest.MonkeyPatch):
     """Clear the lru_cache and reset class variables before each test."""
     _get_cached_tokenizer.cache_clear()
-    TextChunker._recursive_text_splitter = None  # pyright: ignore[reportPrivateUsage]
+    TextChunker._recursive_text_splitter = None
 
     monkeypatch.setattr(chunking, "_INIT_LOCK", threading.Lock())
     yield
@@ -65,21 +67,17 @@ def mock_qdrant_clients(
     mock_sync.collection_exists = mocker.MagicMock(return_value=False)
     mock_async.collection_exists = mocker.AsyncMock(return_value=False)
 
-    # Creation should succeed
     mock_sync.create_collection = mocker.MagicMock(return_value=True)
     mock_async.create_collection = mocker.AsyncMock(return_value=True)
 
-    # Mock close methods for proper cleanup assertions
     mock_sync.close = mocker.MagicMock()
     mock_async.close = mocker.AsyncMock()
 
-    # Mock payload index operations
     mock_success = UpdateResult(operation_id=1, status=UpdateStatus.COMPLETED)
 
     mock_sync.create_payload_index = mocker.MagicMock(return_value=mock_success)
     mock_async.create_payload_index = mocker.AsyncMock(return_value=mock_success)
 
-    # Mock delete operations
     mock_sync.delete = mocker.MagicMock(return_value=mock_success)
     mock_async.delete = mocker.AsyncMock(return_value=mock_success)
 
@@ -138,6 +136,26 @@ def vector_store(
         mock_retriever
     )
 
-    vs._vector_store = mock_lc_store  # pyright: ignore[reportPrivateUsage]
+    vs._vector_store = mock_lc_store
 
     return vs
+
+
+@pytest.fixture
+async def db_engine() -> AsyncGenerator[AsyncEngine]:
+    engine = create_async_engine(url="sqlite+aiosqlite:///:memory:", echo=False)
+    async with engine.begin() as conn:
+        await conn.run_sync(fn=SQLModel.metadata.create_all)
+    yield engine
+    async with engine.begin() as conn:
+        await conn.run_sync(fn=SQLModel.metadata.drop_all)
+    await engine.dispose()
+
+
+@pytest.fixture
+async def db_session(db_engine: AsyncEngine) -> AsyncGenerator[AsyncSession]:
+    factory = async_sessionmaker(
+        bind=db_engine, class_=AsyncSession, expire_on_commit=False
+    )
+    async with factory() as session:
+        yield session

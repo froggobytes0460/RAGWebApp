@@ -26,6 +26,9 @@ test-results/
 # Local Databases / Vectorstore
 .qdrant_local/
 
+# Local developement SQLite datatabse
+*.db
+
 # OS Specific
 .DS_Store
 Thumbs.db

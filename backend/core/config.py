@@ -1,13 +1,21 @@
 from pathlib import Path
+import re
 from typing import Annotated, ClassVar, Literal, Self
 
 from pydantic.fields import Field
 from pydantic.functional_validators import field_validator, model_validator
 from pydantic.main import BaseModel
-from pydantic.networks import AnyHttpUrl
+from pydantic.networks import AnyHttpUrl, AnyUrl, PostgresDsn, UrlConstraints
 from pydantic.types import SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
-import re
+
+SqliteDsn = Annotated[
+    AnyUrl,
+    UrlConstraints(
+        allowed_schemes=["sqlite+aiosqlite"],
+        host_required=False,
+    ),
+]
 
 BASE_DIR = Path(__file__).parents[2]
 ENV_FILE = BASE_DIR / ".env"
@@ -53,10 +61,16 @@ class IngestSettings(BaseModel):
 class VectorStoreSettings(BaseModel):
     """Settings for vector store."""
 
+    QDRANT_API_KEY_PATTERN: ClassVar[str] = r"^[A-Za-z0-9+/]{43,44}=?$"
+
+    api_key: Annotated[
+        SecretStr | None, Field(description="API key for connecting to Qdrant Cloud.")
+    ] = None
+
     collection_name: Annotated[
         str,
         Field(
-            description="The target collection segment name inside the Chroma database instance."
+            description="The target collection segment name inside the Qdrant database instance."
         ),
     ] = "rag_documents"
 
@@ -91,7 +105,29 @@ class VectorStoreSettings(BaseModel):
 
     vector_size: Annotated[
         int, Field(ge=384, description="Size of embedding vectors.")
-    ] = 1024
+    ] = 384
+
+    @model_validator(mode="after")
+    def validate_qdrant_auth(self) -> Self:
+        url_or_path = self.url_or_path
+
+        if not isinstance(url_or_path, Path):
+            host = url_or_path.host or ""
+
+            if "qdrant.tech" in host:
+                if not self.api_key:
+                    raise ValueError(
+                        f"A 'qdrant_api_key' is required when connecting to Qdrant Cloud cluster ({host})."
+                    )
+
+                if not re.match(
+                    self.QDRANT_API_KEY_PATTERN, self.api_key.get_secret_value()
+                ):
+                    raise ValueError(
+                        "The provided 'qdrant_api_key' does not match the strict Qdrant Cloud pattern requirement."
+                    )
+
+        return self
 
     @field_validator("url_or_path")
     @classmethod
@@ -172,6 +208,12 @@ class SearchSettings(BaseModel):
 class LLMSettings(BaseModel):
     """Settings for LLM."""
 
+    api_key: Annotated[SecretStr, Field(description="API key for LLM provider.")]
+
+    max_retries: Annotated[
+        int, Field(description="Maximum retries on LLM output generation.", gt=0)
+    ] = 3
+
     temperature: Annotated[
         float,
         Field(
@@ -181,25 +223,53 @@ class LLMSettings(BaseModel):
         ),
     ] = 0.2
 
-    top_p: Annotated[
-        float, Field(ge=0.1, le=1, description="Predictablity of LLM output.")
-    ]
     max_output_token: Annotated[
         int, Field(ge=1, description="Maximum tokens of LLM output.")
     ]
     model_name: Annotated[str, Field(description="Name of LLM model used from Groq.")]
 
+    provider: Annotated[
+        Literal["groq", "openrouter"],
+        Field(description="LLM provider. Determines which client is instantiated."),
+    ] = "groq"
+
+
+class DatabaseSettings(BaseModel):
+    """Settings for the relational database (SQLite or PostgreSQL)."""
+
+    url: Annotated[
+        SqliteDsn | PostgresDsn,
+        Field(
+            description=(
+                "Async SQLAlchemy connection string. "
+                "SQLite default: 'sqlite+aiosqlite:///./rag.db'. "
+                "PostgreSQL example: 'postgresql+asyncpg://user:pass@host/db'."
+            )
+        ),
+    ] = "sqlite+aiosqlite:///./rag.db"  # pyright: ignore[reportAssignmentType]
+
+    echo_sql: Annotated[
+        bool,
+        Field(description="Log all SQL statements to stdout. Useful for debugging."),
+    ] = False
+
+    @field_validator("url")
+    @classmethod
+    def validate_url(cls, v: SqliteDsn | PostgresDsn) -> SqliteDsn | PostgresDsn:
+        scheme = str(v).split("://")[0]
+        if scheme == "sqlite+aiosqlite":
+            return v
+        if scheme != "postgresql+asyncpg":
+            raise ValueError(
+                f"PostgreSQL URLs must use the 'postgresql+asyncpg' driver, got '{scheme}'."
+            )
+        return v
+
 
 class Settings(BaseSettings):
     """Global settings parsed from environment variables."""
 
-    groq_api_key: Annotated[
-        SecretStr, Field(description="API key for Groq LLM provider.")
-    ]
-
-    qdrant_api_key: Annotated[
-        SecretStr | None, Field(description="API key for connecting to Qdrant Cloud.")
-    ] = None
+    database: DatabaseSettings = DatabaseSettings()
 
     vector_store: VectorStoreSettings
 
@@ -218,75 +288,6 @@ class Settings(BaseSettings):
         frozen=True,
     )
 
-    GROQ_API_KEY_PATTERN: ClassVar[str] = r"^gsk_[a-zA-Z0-9]{48,64}$"
-    QDRANT_API_KEY_PATTERN: ClassVar[str] = r"^[A-Za-z0-9+/]{43,44}=?$"
-
-    @field_validator("groq_api_key")
-    @classmethod
-    def validate_groq_api_key_prefix(cls, v: SecretStr) -> SecretStr:
-        if not re.match(cls.GROQ_API_KEY_PATTERN, v.get_secret_value()):
-            raise ValueError(
-                f"Groq API key must fit the regex expression: {cls.GROQ_API_KEY_PATTERN}"
-            )
-
-        return v
-
-    @model_validator(mode="after")
-    def validate_qdrant_auth(self) -> Self:
-        url_or_path = self.vector_store.url_or_path
-
-        if not isinstance(url_or_path, Path):
-            host = url_or_path.host or ""
-
-            if "qdrant.tech" in host:
-                if not self.qdrant_api_key:
-                    raise ValueError(
-                        f"A 'qdrant_api_key' is required when connecting to Qdrant Cloud cluster ({host})."
-                    )
-
-                if not re.match(
-                    self.QDRANT_API_KEY_PATTERN, self.qdrant_api_key.get_secret_value()
-                ):
-                    raise ValueError(
-                        "The provided 'qdrant_api_key' does not match the strict Qdrant Cloud pattern requirement."
-                    )
-
-        return self
-
 
 settings = Settings()  # pyright: ignore[reportCallIssue]
 """Singleton setting pattern"""
-
-"""
-{
-  "regex": {
-    "pattern": "^[A-Za-z0-9+/]{30,128}==?$",
-    "flags": "",
-    "isValid": true
-  },
-  "generatedStrings": [
-    "wU625Ki/o17r/1Lwt1iLwnb5//Of+rGYj9kKhEY45yL5IkMvXQDjgKS9jsAlQb8PsOU87vHNEw5DGxoWWyHeBuTw6Qa00R==",
-    "KDedJYNq/Z71yjfkoK31WjMz8GeoQqeKkLoq2KDY==",
-    "Q/MrP0TvGXHBzFt2uinCGcakduGYNuUByKV9gzF+wFNyHjPYEoA+Ro1yNQtBp5jO2KQ9iMIWq5==",
-    "G4qu86VilUCDfHioXX9IDUaSRL4kwnoKxWWs3YlDcFyC0SLTCRYrlt3ybecATnEPDHk87SnqMVp1/q/MKFACJT8Z3GGW6t/EYmesCPsBvkERW5+YYcEi=",
-    "H17QvrQt3925lSq+pyMzllnFyT7Lqw+ZyWrYhwycww26LMg/v3lW1T6gzth42Gq6DvdYPsoUuQMnidnm8eMcdYKCa6MoVtk2gCJMpWEg6bEDxYmyoDjl="
-  ],
-  "stats": {
-    "totalGenerated": 5,
-    "requestedCount": 5,
-    "uniqueCount": 5,
-    "averageLength": 89.6,
-    "minLength": 42,
-    "maxLength": 117
-  },
-  "validation": {
-    "allValid": true,
-    "invalidCount": 0,
-    "invalidStrings": []
-  },
-  "metadata": {
-    "generatedAt": "2026-06-14T08:00:26.815Z",
-    "maxLengthSetting": 100
-  }
-}
-"""
