@@ -1,4 +1,5 @@
-from typing import Annotated, Self, TypeAlias
+from datetime import datetime
+from typing import Annotated, Literal, Self, TypeAlias
 
 from pydantic import BaseModel, Field, model_validator
 from qdrant_client.models import UpdateStatus
@@ -139,4 +140,25 @@ class DocumentDeleteResponse(BaseModel):
         Field(
             description="The synchronization or execution status of the delete operation",
         ),
+    ]
+
+
+class MessageHistoryItem(BaseModel):
+    """A single message entry returned from GET /messages history."""
+
+    id: Annotated[
+        int | None,
+        Field(description="Database primary key of the message row."),
+    ]
+    role: Annotated[
+        Literal["user", "ai"],
+        Field(description="Who sent this message."),
+    ]
+    content: Annotated[
+        NonEmptyStr,
+        Field(description="Full text of the message."),
+    ]
+    created_at: Annotated[
+        datetime,
+        Field(description="UTC timestamp when the message was persisted."),
     ]

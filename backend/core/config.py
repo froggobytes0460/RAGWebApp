@@ -226,8 +226,30 @@ class LLMSettings(BaseModel):
     ] = "groq"
 
 
+class DatabaseSettings(BaseModel):
+    """Settings for the relational database (SQLite or PostgreSQL)."""
+
+    url: Annotated[
+        str,
+        Field(
+            description=(
+                "Async SQLAlchemy connection string. "
+                "SQLite default: 'sqlite+aiosqlite:///./rag.db'. "
+                "PostgreSQL example: 'postgresql+asyncpg://user:pass@host/db'."
+            )
+        ),
+    ] = "sqlite+aiosqlite:///./rag.db"
+
+    echo_sql: Annotated[
+        bool,
+        Field(description="Log all SQL statements to stdout. Useful for debugging."),
+    ] = False
+
+
 class Settings(BaseSettings):
     """Global settings parsed from environment variables."""
+
+    database: DatabaseSettings = DatabaseSettings()
 
     vector_store: VectorStoreSettings
 

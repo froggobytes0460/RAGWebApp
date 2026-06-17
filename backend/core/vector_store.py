@@ -12,7 +12,6 @@ from langchain_core.vectorstores import VectorStoreRetriever
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_qdrant import QdrantVectorStore
 from pydantic import BaseModel, ConfigDict, PrivateAttr
-from pydantic.types import SecretStr
 from qdrant_client import AsyncQdrantClient, QdrantClient
 from qdrant_client import models
 from qdrant_client.conversions import common_types
@@ -41,7 +40,6 @@ class VectorStore(BaseModel):
     collection_name: str = settings.vector_store.collection_name
     vector_size: int = settings.vector_store.vector_size
     ttl: int = settings.vector_store.ttl
-    api_key: SecretStr | None = settings.vector_store.api_key
 
     _vector_store: QdrantVectorStore | None = PrivateAttr(default=None)
 
@@ -50,7 +48,11 @@ class VectorStore(BaseModel):
     @classmethod
     def from_settings(cls) -> Self:
         vectorstore_url_or_path = settings.vector_store.url_or_path
-        api_key = cls.api_key.get_secret_value() if cls.api_key else None
+        api_key = (
+            settings.vector_store.api_key.get_secret_value()
+            if settings.vector_store.api_key
+            else None
+        )
         if isinstance(vectorstore_url_or_path, Path):
             client = QdrantClient(path=str(vectorstore_url_or_path))
             async_client = None

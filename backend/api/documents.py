@@ -18,7 +18,9 @@ from backend.core.ingest import DocumentIngestor
 from backend.core.vector_store import VectorStore
 
 documents_router = APIRouter(
-    prefix="/v1/chats/{session_id}/documents", tags=["Documents"]
+    prefix="/v1/chats/{session_id}/documents",
+    tags=["Documents"],
+    redirect_slashes=False,
 )
 
 _vector_store_instance: VectorStore | None = None
@@ -77,7 +79,7 @@ class DocumentView:
 
             if not documents:
                 raise HTTPException(
-                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                     detail="The provided file did not contain any valid text data to parse.",
                 )
 

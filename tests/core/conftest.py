@@ -1,9 +1,9 @@
 # pyright: reportPrivateUsage=none
 
-from collections.abc import Callable
+from collections.abc import AsyncGenerator, Callable
 from pathlib import Path
 import threading
-from typing import Any, override
+from typing import override
 from unittest.mock import AsyncMock, MagicMock
 
 from langchain_core.embeddings import Embeddings
@@ -13,11 +13,13 @@ import pytest
 from pytest_mock import MockerFixture
 from qdrant_client import AsyncQdrantClient, QdrantClient
 from qdrant_client.models import UpdateResult, UpdateStatus
+from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
+from sqlmodel import SQLModel
+from sqlmodel.ext.asyncio.session import AsyncSession
 
 from backend.core import chunking
 from backend.core.chunking import TextChunker, _get_cached_tokenizer
 from backend.core.config import IngestSettings, settings
-from backend.core.llms.groq import LLMGroqClient
 from backend.core.vector_store import VectorStore
 
 
@@ -137,3 +139,23 @@ def vector_store(
     vs._vector_store = mock_lc_store
 
     return vs
+
+
+@pytest.fixture
+async def db_engine() -> AsyncGenerator[AsyncEngine]:
+    engine = create_async_engine(url="sqlite+aiosqlite:///:memory:", echo=False)
+    async with engine.begin() as conn:
+        await conn.run_sync(fn=SQLModel.metadata.create_all)
+    yield engine
+    async with engine.begin() as conn:
+        await conn.run_sync(fn=SQLModel.metadata.drop_all)
+    await engine.dispose()
+
+
+@pytest.fixture
+async def db_session(db_engine: AsyncEngine) -> AsyncGenerator[AsyncSession]:
+    factory = async_sessionmaker(
+        bind=db_engine, class_=AsyncSession, expire_on_commit=False
+    )
+    async with factory() as session:
+        yield session
