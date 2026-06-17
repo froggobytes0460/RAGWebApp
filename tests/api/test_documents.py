@@ -7,7 +7,7 @@ from httpx import ASGITransport, AsyncClient
 from langchain_core.documents import Document
 import pytest
 import pytest_mock
-from qdrant_client.models import UpdateResult, UpdateStatus
+from qdrant_client.models import UpdateResult
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from backend.api.app import app
@@ -15,18 +15,11 @@ from backend.api.documents import get_vector_store
 from backend.core.database import get_session
 
 
-def _make_update_result() -> UpdateResult:
-    return UpdateResult(operation_id=1, status=UpdateStatus.COMPLETED)
-
-
-def _make_pdf_bytes() -> bytes:
-    return b"%PDF-1.4 fake pdf content"
-
-
 class TestCreateDocument:
     async def test_returns_201_on_valid_upload(
         self,
         client: AsyncClient,
+        mock_pdf_bytes: bytes,
         mocker: pytest_mock.MockerFixture,
     ) -> None:
         parsed_doc = Document(
@@ -47,7 +40,11 @@ class TestCreateDocument:
         resp = await client.post(
             url="/api/v1/chats/sess-abc/documents/",
             files={
-                "file": ("report.pdf", BytesIO(_make_pdf_bytes()), "application/pdf")
+                "file": (
+                    "report.pdf",
+                    BytesIO(initial_bytes=mock_pdf_bytes),
+                    "application/pdf",
+                )
             },
         )
 
@@ -71,6 +68,7 @@ class TestCreateDocument:
     async def test_422_when_ingestor_returns_empty(
         self,
         client: AsyncClient,
+        mock_pdf_bytes: bytes,
         mocker: pytest_mock.MockerFixture,
     ) -> None:
         _ = mocker.patch(
@@ -83,7 +81,7 @@ class TestCreateDocument:
             files={
                 "file": (
                     "empty.pdf",
-                    BytesIO(initial_bytes=_make_pdf_bytes()),
+                    BytesIO(initial_bytes=mock_pdf_bytes),
                     "application/pdf",
                 )
             },
@@ -95,6 +93,7 @@ class TestCreateDocument:
     async def test_413_when_file_exceeds_size_limit(
         self,
         client: AsyncClient,
+        mock_pdf_bytes: bytes,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         # Drive max_file_size to 0 so any byte written triggers the 413 path.
@@ -105,7 +104,11 @@ class TestCreateDocument:
         resp = await client.post(
             url="/api/v1/chats/sess-abc/documents/",
             files={
-                "file": ("big.pdf", BytesIO(_make_pdf_bytes() * 10), "application/pdf")
+                "file": (
+                    "big.pdf",
+                    BytesIO(initial_bytes=mock_pdf_bytes * 10),
+                    "application/pdf",
+                )
             },
         )
 
@@ -202,8 +205,8 @@ class TestDeleteDocument:
         self,
         client: AsyncClient,
         mocker: pytest_mock.MockerFixture,
+        mock_result: UpdateResult,
     ) -> None:
-        mock_result = _make_update_result()
         mock_vs = app.dependency_overrides[get_vector_store]()
         mock_vs.adelete_document = mocker.AsyncMock(return_value=mock_result)
 
@@ -215,9 +218,9 @@ class TestDeleteDocument:
     async def test_delete_calls_vector_store_with_correct_args(
         self,
         db_session: AsyncSession,
+        mock_result: UpdateResult,
         mocker: pytest_mock.MockerFixture,
     ) -> None:
-        mock_result = _make_update_result()
         mock_vs = mocker.MagicMock()
         mock_vs.adelete_document = mocker.AsyncMock(return_value=mock_result)
 
@@ -242,17 +245,17 @@ class TestDeleteDocument:
         )
 
     @pytest.mark.parametrize(
-        "filename",
-        ["doc with spaces.pdf", "résumé.pdf", "report-2024.docx"],
+        argnames="filename",
+        argvalues=["doc with spaces.pdf", "résumé.pdf", "report-2024.docx"],
         ids=["spaces", "unicode", "hyphenated"],
     )
     async def test_delete_accepts_various_filenames(
         self,
         filename: str,
         db_session: AsyncSession,
+        mock_result: UpdateResult,
         mocker: pytest_mock.MockerFixture,
     ) -> None:
-        mock_result = _make_update_result()
         mock_vs = mocker.MagicMock()
         mock_vs.adelete_document = mocker.AsyncMock(return_value=mock_result)
 
@@ -266,7 +269,7 @@ class TestDeleteDocument:
             transport=ASGITransport(app=app), base_url="http://test"
         ) as http_client:
             resp = await http_client.delete(
-                f"/api/v1/chats/sess-del/documents/{filename}"
+                url=f"/api/v1/chats/sess-del/documents/{filename}"
             )
 
         app.dependency_overrides.clear()

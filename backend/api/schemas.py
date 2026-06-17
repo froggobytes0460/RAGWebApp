@@ -118,22 +118,6 @@ class RetrievedChunk(BaseModel):
     ) = None
 
 
-class MessageResponse(BaseModel):
-    """Response model returning the generative answer grounded by retrieved sources."""
-
-    answer: Annotated[
-        NonEmptyStr,
-        Field(description="LLM answer derived and synthesized from context data."),
-    ]
-    retrieved_chunks: Annotated[
-        list[RetrievedChunk],
-        Field(
-            default_factory=list,
-            description="List of chunks used to ground and answer this question.",
-        ),
-    ]
-
-
 class DocumentDeleteResponse(BaseModel):
     status: Annotated[
         UpdateStatus,
@@ -141,6 +125,18 @@ class DocumentDeleteResponse(BaseModel):
             description="The synchronization or execution status of the delete operation",
         ),
     ]
+
+
+class StreamChunk(BaseModel):
+    """SSE payload shapes for the streaming message endpoint."""
+
+    text: Annotated[
+        str,
+        Field(description="LLM token chunk emitted during streaming."),
+    ] = ""
+    retrieved_chunks: list[RetrievedChunk] = Field(
+        default_factory=list, description="Populated only in the final 'done' event."
+    )
 
 
 class MessageHistoryItem(BaseModel):

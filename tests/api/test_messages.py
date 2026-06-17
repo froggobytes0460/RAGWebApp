@@ -1,10 +1,13 @@
 # pyright: reportAny=none
 # pyright: reportPrivateUsage=none
 
+import json
 from collections.abc import AsyncGenerator
 
 from httpx import ASGITransport, AsyncClient
 import pytest_mock
+from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker
+from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 import backend.core.models  # pyright: ignore[reportUnusedImport]
@@ -14,6 +17,23 @@ from backend.core.database import get_session
 from backend.core.models import ChatMessage, ChatSession
 
 from tests.api.conftest import _make_mock_llm, _make_mock_vector_store
+
+
+def _parse_sse(text: str) -> list[dict[str, str]]:
+    """Parse raw SSE text into a list of {event, data} dicts."""
+    events: list[dict[str, str]] = []
+    current: dict[str, str] = {}
+    for line in text.splitlines():
+        if line.startswith("event:"):
+            current["event"] = line.removeprefix("event:").strip()
+        elif line.startswith("data:"):
+            current["data"] = line.removeprefix("data:").strip()
+        elif line == "" and current:
+            events.append(current)
+            current = {}
+    if current:
+        events.append(current)
+    return events
 
 
 class TestCreateMessage:
@@ -30,11 +50,19 @@ class TestCreateMessage:
             json={"question": "What is the answer?"},
         )
 
-        assert resp.status_code == 201
-        body = resp.json()
-        assert body["answer"] == "The answer is 42."
-        assert len(body["retrieved_chunks"]) == 1
-        assert body["retrieved_chunks"][0]["filename"] == "doc.pdf"
+        assert resp.status_code == 200
+        events = _parse_sse(resp.text)
+        chunk_events = [e for e in events if e.get("event") == "chunk"]
+        done_events = [e for e in events if e.get("event") == "done"]
+
+        assert len(chunk_events) >= 1
+        full_answer = "".join(json.loads(e["data"])["text"] for e in chunk_events)
+        assert full_answer == "The answer is 42."
+
+        assert len(done_events) == 1
+        done_data = json.loads(done_events[0]["data"])
+        assert len(done_data["retrieved_chunks"]) == 1
+        assert done_data["retrieved_chunks"][0]["filename"] == "doc.pdf"
 
     async def test_404_when_no_documents_retrieved(
         self,
@@ -65,18 +93,27 @@ class TestCreateMessage:
         self,
         client: AsyncClient,
         db_session: AsyncSession,
+        db_engine: AsyncEngine,
         mocker: pytest_mock.MockerFixture,
     ) -> None:
         mock_llm = _make_mock_llm(answer="persisted answer", mocker=mocker)
         _ = mocker.patch("backend.api.messages._get_llm_client", return_value=mock_llm)
 
+        background_factory = async_sessionmaker(
+            bind=db_engine,  # type: ignore[arg-type]
+            class_=AsyncSession,
+            expire_on_commit=False,
+        )
+        _ = mocker.patch(
+            "backend.api.messages.get_session_factory",
+            return_value=background_factory,
+        )
+
         resp = await client.post(
             url="/api/v1/chats/sess-persist/messages/",
             json={"question": "save me?"},
         )
-        assert resp.status_code == 201
-
-        from sqlmodel import select
+        assert resp.status_code == 200
 
         result = await db_session.exec(
             select(ChatMessage).where(ChatMessage.session_id == "sess-persist")
@@ -90,16 +127,27 @@ class TestCreateMessage:
         self,
         client: AsyncClient,
         db_session: AsyncSession,
+        db_engine: AsyncEngine,
         mocker: pytest_mock.MockerFixture,
     ) -> None:
         mock_llm = _make_mock_llm(answer="ok", mocker=mocker)
         _ = mocker.patch("backend.api.messages._get_llm_client", return_value=mock_llm)
 
+        background_factory = async_sessionmaker(
+            bind=db_engine,  # type: ignore[arg-type]
+            class_=AsyncSession,
+            expire_on_commit=False,
+        )
+        _ = mocker.patch(
+            "backend.api.messages.get_session_factory",
+            return_value=background_factory,
+        )
+
         resp = await client.post(
             url="/api/v1/chats/new-session/messages/",
             json={"question": "hello?"},
         )
-        assert resp.status_code == 201
+        assert resp.status_code == 200
 
         session_row = await db_session.get(entity=ChatSession, ident="new-session")
         assert session_row is not None

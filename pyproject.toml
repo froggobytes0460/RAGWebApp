@@ -36,6 +36,9 @@ dev = [
 ]
 
 [tool.basedpyright]
+pythonVersion = "3.13.11"
+venvPath = "."
+venv = ".venv"
 exclude = [
    ".venv",
     "**/__pycache__",

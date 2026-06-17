@@ -1,4 +1,5 @@
 from collections.abc import AsyncGenerator
+from functools import lru_cache
 
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
 from sqlmodel import SQLModel
@@ -6,29 +7,22 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from backend.core.config import settings
 
-_engine: AsyncEngine | None = None
-_session_factory: async_sessionmaker[AsyncSession] | None = None
 
-
+@lru_cache(maxsize=1)
 def get_engine() -> AsyncEngine:
-    global _engine
-    if _engine is None:
-        _engine = create_async_engine(
-            url=settings.database.url,
-            echo=settings.database.echo_sql,
-        )
-    return _engine
+    return create_async_engine(
+        url=settings.database.url,
+        echo=settings.database.echo_sql,
+    )
 
 
+@lru_cache(maxsize=1)
 def get_session_factory() -> async_sessionmaker[AsyncSession]:
-    global _session_factory
-    if _session_factory is None:
-        _session_factory = async_sessionmaker(
-            bind=get_engine(),
-            class_=AsyncSession,
-            expire_on_commit=False,
-        )
-    return _session_factory
+    return async_sessionmaker[AsyncSession](
+        bind=get_engine(),
+        class_=AsyncSession,
+        expire_on_commit=False,
+    )
 
 
 async def init_db() -> None:

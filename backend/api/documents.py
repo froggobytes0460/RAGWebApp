@@ -1,3 +1,4 @@
+from functools import lru_cache
 from pathlib import Path
 import shutil
 import tempfile
@@ -23,14 +24,10 @@ documents_router = APIRouter(
     redirect_slashes=False,
 )
 
-_vector_store_instance: VectorStore | None = None
 
-
+@lru_cache(maxsize=1)
 def get_vector_store() -> VectorStore:
-    global _vector_store_instance
-    if _vector_store_instance is None:
-        _vector_store_instance = VectorStore.from_settings()
-    return _vector_store_instance
+    return VectorStore.from_settings()
 
 
 @cbv(router=documents_router)

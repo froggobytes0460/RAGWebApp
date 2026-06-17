@@ -9,6 +9,7 @@ from httpx import ASGITransport, AsyncClient
 from langchain_core.documents import Document
 import pytest
 import pytest_mock
+from qdrant_client import models
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
 from sqlmodel import SQLModel
 from sqlmodel.ext.asyncio.session import AsyncSession
@@ -70,6 +71,7 @@ def _make_mock_docs() -> list[Document]:
 
 @pytest.fixture
 async def client(
+    db_engine: AsyncEngine,
     db_session: AsyncSession,
     mocker: pytest_mock.MockerFixture,
 ) -> AsyncGenerator[AsyncClient]:
@@ -77,6 +79,14 @@ async def client(
     mock_llm = _make_mock_llm(answer="default answer", mocker=mocker)
 
     _ = mocker.patch("backend.api.messages._get_llm_client", return_value=mock_llm)
+
+    background_factory = async_sessionmaker(
+        bind=db_engine, class_=AsyncSession, expire_on_commit=False
+    )
+    _ = mocker.patch(
+        "backend.api.messages.get_session_factory",
+        return_value=background_factory,
+    )
 
     async def _override_get_session() -> AsyncGenerator[AsyncSession]:
         yield db_session
@@ -91,3 +101,13 @@ async def client(
         yield http_client
 
     app.dependency_overrides.clear()
+
+
+@pytest.fixture
+def mock_result() -> models.UpdateResult:
+    return models.UpdateResult(operation_id=1, status=models.UpdateStatus.COMPLETED)
+
+
+@pytest.fixture
+def mock_pdf_bytes() -> bytes:
+    return b"%PDF-1.4 fake pdf content"
