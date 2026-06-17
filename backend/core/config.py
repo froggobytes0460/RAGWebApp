@@ -1,13 +1,21 @@
 from pathlib import Path
+import re
 from typing import Annotated, ClassVar, Literal, Self
 
 from pydantic.fields import Field
 from pydantic.functional_validators import field_validator, model_validator
 from pydantic.main import BaseModel
-from pydantic.networks import AnyHttpUrl
+from pydantic.networks import AnyHttpUrl, AnyUrl, PostgresDsn, UrlConstraints
 from pydantic.types import SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
-import re
+
+SqliteDsn = Annotated[
+    AnyUrl,
+    UrlConstraints(
+        allowed_schemes=["sqlite+aiosqlite"],
+        host_required=False,
+    ),
+]
 
 BASE_DIR = Path(__file__).parents[2]
 ENV_FILE = BASE_DIR / ".env"
@@ -230,7 +238,7 @@ class DatabaseSettings(BaseModel):
     """Settings for the relational database (SQLite or PostgreSQL)."""
 
     url: Annotated[
-        str,
+        SqliteDsn | PostgresDsn,
         Field(
             description=(
                 "Async SQLAlchemy connection string. "
@@ -238,12 +246,24 @@ class DatabaseSettings(BaseModel):
                 "PostgreSQL example: 'postgresql+asyncpg://user:pass@host/db'."
             )
         ),
-    ] = "sqlite+aiosqlite:///./rag.db"
+    ] = "sqlite+aiosqlite:///./rag.db"  # pyright: ignore[reportAssignmentType]
 
     echo_sql: Annotated[
         bool,
         Field(description="Log all SQL statements to stdout. Useful for debugging."),
     ] = False
+
+    @field_validator("url")
+    @classmethod
+    def validate_url(cls, v: SqliteDsn | PostgresDsn) -> SqliteDsn | PostgresDsn:
+        scheme = str(v).split("://")[0]
+        if scheme == "sqlite+aiosqlite":
+            return v
+        if scheme != "postgresql+asyncpg":
+            raise ValueError(
+                f"PostgreSQL URLs must use the 'postgresql+asyncpg' driver, got '{scheme}'."
+            )
+        return v
 
 
 class Settings(BaseSettings):
