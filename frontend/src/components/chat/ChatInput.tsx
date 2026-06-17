@@ -41,20 +41,20 @@ export function ChatInput({ onSend, isStreaming, onStop }: ChatInputProps) {
   }
 
   return (
-    <div className="border-t border-gray-100 bg-white px-4 py-3">
+    <div className="border-t border-gray-800 bg-[#13151e] px-4 py-3">
       {showSettings && (
-        <div className="mb-3 rounded-xl border border-gray-100 bg-gray-50 px-4 py-3 text-sm">
+        <div className="mb-3 rounded-xl border border-gray-700 bg-[#1a1d27] px-4 py-3 text-sm">
           <div className="flex items-center justify-between mb-3">
-            <span className="font-medium text-gray-700">Retrieval settings</span>
-            <button onClick={() => setShowSettings(false)} className="text-gray-400 hover:text-gray-600">
+            <span className="font-medium text-gray-200">Retrieval settings</span>
+            <button onClick={() => setShowSettings(false)} className="text-gray-500 hover:text-gray-300">
               <X size={14} />
             </button>
           </div>
           <div className="flex flex-col gap-3">
             <label className="flex flex-col gap-1">
-              <div className="flex justify-between text-xs text-gray-500">
+              <div className="flex justify-between text-xs text-gray-400">
                 <span>Top K chunks</span>
-                <span className="font-medium text-gray-700">{topK}</span>
+                <span className="font-medium text-gray-200">{topK}</span>
               </div>
               <input
                 type="range" min={1} max={50} value={topK}
@@ -63,15 +63,15 @@ export function ChatInput({ onSend, isStreaming, onStop }: ChatInputProps) {
               />
             </label>
             <label className="flex flex-col gap-1">
-              <div className="flex items-center justify-between text-xs text-gray-500">
+              <div className="flex items-center justify-between text-xs text-gray-400">
                 <span>Score threshold</span>
                 <div className="flex items-center gap-2">
                   <input
                     type="checkbox" checked={useThreshold}
                     onChange={(e) => setUseThreshold(e.target.checked)}
-                    className="accent-violet-600"
+                    className="accent-violet-500"
                   />
-                  <span className="font-medium text-gray-700">
+                  <span className="font-medium text-gray-200">
                     {useThreshold ? (scoreThreshold ?? 0.5).toFixed(2) : 'off'}
                   </span>
                 </div>
@@ -91,7 +91,7 @@ export function ChatInput({ onSend, isStreaming, onStop }: ChatInputProps) {
       <div className="flex items-end gap-2">
         <button
           onClick={() => setShowSettings((s) => !s)}
-          className={`shrink-0 rounded-lg p-2 transition-colors ${showSettings ? 'bg-violet-100 text-violet-600' : 'text-gray-400 hover:bg-gray-100 hover:text-gray-600'}`}
+          className={`shrink-0 rounded-lg p-2 transition-colors ${showSettings ? 'bg-violet-900/50 text-violet-400' : 'text-gray-500 hover:bg-gray-800 hover:text-gray-300'}`}
           title="Retrieval settings"
         >
           <Settings2 size={18} />
@@ -103,7 +103,7 @@ export function ChatInput({ onSend, isStreaming, onStop }: ChatInputProps) {
           onKeyDown={onKeyDown}
           placeholder="Ask a question… (Enter to send, Shift+Enter for newline)"
           rows={1}
-          className="flex-1 resize-none rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-800 placeholder-gray-400 outline-none focus:border-violet-400 focus:bg-white transition-colors"
+          className="flex-1 resize-none rounded-xl border border-gray-700 bg-[#1a1d27] px-3 py-2 text-sm text-gray-200 placeholder-gray-600 outline-none focus:border-violet-500 focus:bg-[#1f2233] transition-colors"
           style={{ maxHeight: '160px' }}
         />
         {isStreaming ? (

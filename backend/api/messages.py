@@ -174,6 +174,9 @@ class MessageView:
                 role=m.role,
                 content=m.content,
                 created_at=m.created_at,
+                retrieved_chunks=[
+                    RetrievedChunk(**c) for c in (m.retrieved_chunks or [])
+                ],
             )
             for m in messages
         ]

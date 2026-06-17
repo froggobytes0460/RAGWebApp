@@ -21,19 +21,19 @@ export function DocumentDrawer({ sessionId, open, onClose }: DocumentDrawerProps
         />
       )}
       <aside
-        className={`fixed right-0 top-0 z-20 flex h-full w-72 flex-col border-l border-gray-100 bg-white shadow-xl transition-transform duration-200
+        className={`fixed right-0 top-0 z-20 flex h-full w-72 flex-col border-l border-gray-800 bg-[#13151e] shadow-xl transition-transform duration-200
           ${open ? 'translate-x-0' : 'translate-x-full'}`}
       >
-        <div className="flex items-center justify-between border-b border-gray-100 px-4 py-3">
-          <span className="text-sm font-semibold text-gray-700">Documents</span>
-          <button onClick={onClose} className="text-gray-400 hover:text-gray-600">
+        <div className="flex items-center justify-between border-b border-gray-800 px-4 py-3">
+          <span className="text-sm font-semibold text-gray-200">Documents</span>
+          <button onClick={onClose} className="text-gray-500 hover:text-gray-300">
             <X size={16} />
           </button>
         </div>
         <div className="flex flex-1 flex-col gap-4 overflow-y-auto p-4">
           <UploadZone uploadMutation={uploadMutation} uploadProgress={uploadProgress} />
           <div>
-            <p className="mb-2 text-xs font-medium uppercase tracking-wide text-gray-400">
+            <p className="mb-2 text-xs font-medium uppercase tracking-wide text-gray-500">
               Uploaded files
             </p>
             <DocumentList query={query} deleteMutation={deleteMutation} />

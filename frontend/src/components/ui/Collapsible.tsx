@@ -15,7 +15,7 @@ export function Collapsible({ trigger, children, defaultOpen = false, className 
     <div className={className}>
       <button
         onClick={() => setOpen((o) => !o)}
-        className="flex w-full items-center gap-1 text-left text-sm font-medium text-gray-500 hover:text-gray-700 transition-colors"
+        className="flex w-full items-center gap-1 text-left text-sm font-medium text-gray-500 hover:text-gray-300 transition-colors"
       >
         <ChevronDown
           size={14}

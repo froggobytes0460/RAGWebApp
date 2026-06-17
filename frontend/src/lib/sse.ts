@@ -14,7 +14,7 @@ export async function streamMessage(
 ): Promise<void> {
   let response: Response
   try {
-    response = await fetch(`/api/v1/chats/${sessionId}/messages`, {
+    response = await fetch(`/api/v1/chats/${sessionId}/messages/`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',

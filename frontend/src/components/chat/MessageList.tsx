@@ -38,8 +38,8 @@ export function MessageList({
   if (messages.length === 0 && !isStreaming) {
     return (
       <div className="flex flex-1 flex-col items-center justify-center text-center px-8">
-        <p className="text-2xl font-semibold text-gray-200">Ask anything</p>
-        <p className="mt-2 text-sm text-gray-400">Upload documents, then start a conversation.</p>
+        <p className="text-2xl font-semibold text-gray-600">Ask anything</p>
+        <p className="mt-2 text-sm text-gray-500">Upload documents, then start a conversation.</p>
       </div>
     )
   }

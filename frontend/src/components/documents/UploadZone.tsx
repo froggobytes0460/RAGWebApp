@@ -56,14 +56,14 @@ export function UploadZone({ uploadMutation, uploadProgress }: UploadZoneProps) 
         onDrop={onDrop}
         onClick={() => !isUploading && inputRef.current?.click()}
         className={`flex cursor-pointer flex-col items-center justify-center rounded-lg border-2 border-dashed px-4 py-6 text-center transition-colors
-          ${isDragging ? 'border-violet-400 bg-violet-50' : 'border-gray-200 bg-gray-50 hover:border-gray-300'}
+          ${isDragging ? 'border-violet-500 bg-violet-900/20' : 'border-gray-700 bg-[#1a1d27] hover:border-gray-600'}
           ${isUploading ? 'pointer-events-none opacity-60' : ''}`}
       >
-        <Upload size={20} className="mb-2 text-gray-400" />
-        <p className="text-sm text-gray-600">
+        <Upload size={20} className="mb-2 text-gray-500" />
+        <p className="text-sm text-gray-400">
           {isUploading ? 'Uploading…' : 'Drop a file or click to upload'}
         </p>
-        <p className="mt-1 text-xs text-gray-400">PDF, DOCX, MD, XLSX · max {MAX_MB}MB</p>
+        <p className="mt-1 text-xs text-gray-500">PDF, DOCX, MD, XLSX · max {MAX_MB}MB</p>
         <input
           ref={inputRef}
           type="file"
@@ -75,7 +75,7 @@ export function UploadZone({ uploadMutation, uploadProgress }: UploadZoneProps) 
       </div>
 
       {uploadProgress !== null && (
-        <div className="h-1.5 w-full rounded-full bg-gray-200 overflow-hidden">
+        <div className="h-1.5 w-full rounded-full bg-gray-700 overflow-hidden">
           <div
             className="h-full rounded-full bg-violet-500 transition-all duration-150"
             style={{ width: `${uploadProgress}%` }}

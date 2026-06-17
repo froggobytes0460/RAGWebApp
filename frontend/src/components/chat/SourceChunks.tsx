@@ -13,11 +13,11 @@ export function SourceChunks({ chunks }: SourceChunksProps) {
     <Collapsible trigger={`${chunks.length} source${chunks.length > 1 ? 's' : ''}`} className="mt-2">
       <div className="flex flex-col gap-2">
         {chunks.map((chunk, i) => (
-          <div key={i} className="rounded-lg border border-gray-100 bg-gray-50 px-3 py-2 text-xs text-gray-600">
+          <div key={i} className="rounded-lg border border-gray-700 bg-[#1a1d27] px-3 py-2 text-xs text-gray-400">
             <div className="flex items-center gap-2 mb-1 flex-wrap">
-              <span className="font-medium text-gray-700 truncate">{chunk.filename}</span>
+              <span className="font-medium text-gray-300 truncate">{chunk.filename}</span>
               {chunk.page_number != null && (
-                <span className="text-gray-400">p.{chunk.page_number}</span>
+                <span className="text-gray-500">p.{chunk.page_number}</span>
               )}
               <Badge value={chunk.score} />
             </div>

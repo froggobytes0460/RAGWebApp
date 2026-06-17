@@ -1,4 +1,4 @@
-import type { IngestResponse, MessageHistoryItem } from '../types/api'
+import type { DocumentListItem, IngestResponse, MessageHistoryItem } from '../types/api'
 
 const BASE = '/api/v1/chats'
 
@@ -11,10 +11,10 @@ async function handleResponse<T>(res: Response): Promise<T> {
 }
 
 export const api = {
-  listDocuments: async (sessionId: string): Promise<string[]> => {
-    const res = await fetch(`${BASE}/${sessionId}/documents`)
+  listDocuments: async (sessionId: string): Promise<DocumentListItem[]> => {
+    const res = await fetch(`${BASE}/${sessionId}/documents/`)
     if (res.status === 404) return []
-    return handleResponse<string[]>(res)
+    return handleResponse<DocumentListItem[]>(res)
   },
 
   uploadDocument: (
@@ -40,7 +40,7 @@ export const api = {
         }
       }
       xhr.onerror = () => reject(new Error('Network error'))
-      xhr.open('POST', `${BASE}/${sessionId}/documents`)
+      xhr.open('POST', `${BASE}/${sessionId}/documents/`)
       xhr.send(form)
     })
   },
@@ -57,7 +57,7 @@ export const api = {
   },
 
   listMessages: async (sessionId: string): Promise<MessageHistoryItem[]> => {
-    const res = await fetch(`${BASE}/${sessionId}/messages`)
+    const res = await fetch(`${BASE}/${sessionId}/messages/`)
     if (res.status === 404) return []
     return handleResponse<MessageHistoryItem[]>(res)
   },

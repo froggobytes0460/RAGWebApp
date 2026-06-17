@@ -11,10 +11,10 @@ export function StreamingBubble({ content, sources, isDone }: StreamingBubblePro
   return (
     <div className="flex justify-start">
       <div className="max-w-[75%]">
-        <div className="rounded-2xl rounded-tl-sm bg-white border border-gray-100 px-4 py-2.5 text-sm leading-relaxed text-gray-800 shadow-sm whitespace-pre-wrap">
+        <div className="rounded-2xl rounded-tl-sm bg-[#1a1d27] border border-gray-700 px-4 py-2.5 text-sm leading-relaxed text-gray-200 shadow-sm whitespace-pre-wrap">
           {content}
           {!isDone && (
-            <span className="ml-0.5 inline-block h-3.5 w-0.5 animate-pulse bg-gray-400 align-middle" />
+            <span className="ml-0.5 inline-block h-3.5 w-0.5 animate-pulse bg-gray-500 align-middle" />
           )}
         </div>
         {isDone && sources.length > 0 && (

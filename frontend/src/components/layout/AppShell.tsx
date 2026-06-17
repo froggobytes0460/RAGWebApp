@@ -16,16 +16,16 @@ export function AppShell() {
   const session = sessions.find((s) => s.id === sessionId)
 
   return (
-    <div className="flex h-full overflow-hidden bg-white">
+    <div className="flex h-full overflow-hidden bg-[#0f1117]">
       <SessionSidebar />
       <div className="flex flex-1 flex-col overflow-hidden">
-        <header className="flex items-center justify-between border-b border-gray-100 px-4 py-2.5">
-          <h1 className="truncate text-sm font-semibold text-gray-800">
+        <header className="flex items-center justify-between border-b border-gray-800 px-4 py-2.5">
+          <h1 className="truncate text-sm font-semibold text-gray-100">
             {session?.label ?? 'Chat'}
           </h1>
           <button
             onClick={() => setDrawerOpen((o) => !o)}
-            className="flex items-center gap-1.5 rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-50 transition-colors"
+            className="flex items-center gap-1.5 rounded-lg border border-gray-700 px-3 py-1.5 text-xs font-medium text-gray-400 hover:bg-gray-800 transition-colors"
           >
             <FolderOpen size={14} />
             Documents

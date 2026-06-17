@@ -1,9 +1,10 @@
 import { DocumentItem } from './DocumentItem'
 import { Spinner } from '../ui/Spinner'
 import type { UseMutationResult, UseQueryResult } from '@tanstack/react-query'
+import type { DocumentListItem } from '../../types/api'
 
 interface DocumentListProps {
-  query: UseQueryResult<string[]>
+  query: UseQueryResult<DocumentListItem[]>
   deleteMutation: UseMutationResult<void, Error, string>
 }
 
@@ -17,14 +18,14 @@ export function DocumentList({ query, deleteMutation }: DocumentListProps) {
   }
 
   if (query.isError) {
-    return <p className="text-sm text-red-500">Failed to load documents.</p>
+    return <p className="text-sm text-red-400">Failed to load documents.</p>
   }
 
   const docs = query.data ?? []
 
   if (docs.length === 0) {
     return (
-      <p className="text-center text-sm text-gray-400 py-3">
+      <p className="text-center text-sm text-gray-500 py-3">
         No documents uploaded yet.
       </p>
     )
@@ -32,7 +33,7 @@ export function DocumentList({ query, deleteMutation }: DocumentListProps) {
 
   return (
     <div className="flex flex-col gap-1.5">
-      {docs.map((filename) => (
+      {docs.map(({ filename }) => (
         <DocumentItem
           key={filename}
           filename={filename}

@@ -15,7 +15,7 @@ export function MessageBubble({ message }: MessageBubbleProps) {
           className={`rounded-2xl px-4 py-2.5 text-sm leading-relaxed whitespace-pre-wrap
             ${isUser
               ? 'rounded-tr-sm bg-violet-600 text-white'
-              : 'rounded-tl-sm bg-white border border-gray-100 text-gray-800 shadow-sm'
+              : 'rounded-tl-sm bg-[#1a1d27] border border-gray-700 text-gray-200 shadow-sm'
             }`}
         >
           {message.content}
