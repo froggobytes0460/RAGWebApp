@@ -158,3 +158,4 @@ class MessageHistoryItem(BaseModel):
         datetime,
         Field(description="UTC timestamp when the message was persisted."),
     ]
+    retrieved_chunks: list[RetrievedChunk] = Field(default_factory=list)

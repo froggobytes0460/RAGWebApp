@@ -6,12 +6,13 @@ from typing import cast
 
 import aiofiles
 from anyio.to_thread import run_sync
-from fastapi import APIRouter, UploadFile, status
+from fastapi import APIRouter, Request, UploadFile, status
 from fastapi.exceptions import HTTPException
 from fastapi.param_functions import Depends
 from fastapi_utils.cbv import cbv
 from werkzeug.utils import secure_filename
 
+from backend.api.limiter import limiter
 from backend.api.schemas import DocumentDeleteResponse, IngestResponse
 from backend.core.chunking import TextChunker
 from backend.core.config import settings
@@ -35,8 +36,14 @@ class DocumentView:
     vector_store: VectorStore = cast(VectorStore, Depends(dependency=get_vector_store))
 
     @documents_router.post(path="/", status_code=status.HTTP_201_CREATED)
+    @limiter.limit(  # pyright: ignore[reportUnknownMemberType, reportUntypedFunctionDecorator]
+        limit_value="10/minute"
+    )
     async def create_document(
-        self, session_id: str, file: UploadFile
+        self,
+        request: Request,  # pyright: ignore[reportUnusedParameter]
+        session_id: str,
+        file: UploadFile,
     ) -> IngestResponse:
         """Upload, validate, and chunk a document into a dedicated chat session store."""
 

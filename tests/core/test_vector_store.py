@@ -1,4 +1,3 @@
-from typing import cast
 from unittest.mock import AsyncMock, MagicMock
 
 from langchain_core.documents import Document
@@ -57,13 +56,17 @@ class TestVectorStoreDocuments:
         ids = await vector_store.ainsert_docs(documents=[doc], session_id=session_id)
         assert len(ids) == 1
 
-        retriever = vector_store.get_retriever(session_id=session_id, k=1)
+        _ = mocker.patch.object(
+            target=vector_store.vector_store,
+            attribute="asimilarity_search_with_relevance_scores",
+            new=mocker.AsyncMock(return_value=[(doc, 0.9)]),
+        )
 
-        retriever.ainvoke = mocker.AsyncMock(return_value=[doc])
-
-        results = cast(list[Document], await retriever.ainvoke(""))
+        results = await vector_store.asearch_with_scores(
+            query="", session_id=session_id, k=1
+        )
         assert len(results) == 1
-        assert results[0].page_content == doc.page_content
+        assert results[0][0].page_content == doc.page_content
 
     async def test_list_documents(
         self,

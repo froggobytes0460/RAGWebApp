@@ -3,26 +3,33 @@
 import asyncio
 from collections.abc import AsyncGenerator, Awaitable, Callable
 from contextlib import asynccontextmanager
-from typing import Any
+from typing import Any, cast
 
 from fastapi import status
 from fastapi.applications import FastAPI
+from fastapi.exceptions import HTTPException
 from fastapi.openapi.utils import get_openapi
 from fastapi.requests import Request
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.routing import APIRouter
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from starlette.types import ExceptionHandler
 
 from backend.api.documents import documents_router, get_vector_store
+from backend.api.limiter import limiter
 from backend.api.messages import messages_router
 from backend.core.chunking import (
     _get_cached_tokenizer,  # pyright: ignore[reportPrivateUsage]
 )
-from backend.core.config import settings
+from backend.core.config import BASE_DIR, settings
 from backend.core.database import close_db, init_db
 import backend.core.models  # pyright: ignore[reportUnusedImport]
 from backend.core.vector_store import (
     _get_huggingface_embeddings,  # pyright: ignore[reportPrivateUsage]
 )
+
+_FRONTEND_DIST = BASE_DIR / "frontend/dist"
 
 
 @asynccontextmanager
@@ -46,6 +53,11 @@ main_api.include_router(router=messages_router)
 
 # App initialization
 app = FastAPI(lifespan=lifespan)
+app.state.limiter = limiter
+app.add_exception_handler(
+    exc_class_or_status_code=RateLimitExceeded,
+    handler=cast(ExceptionHandler, _rate_limit_exceeded_handler),
+)
 app.include_router(router=main_api)
 
 
@@ -180,3 +192,31 @@ def custom_openapi() -> dict[str, Any]:  # pyright: ignore[reportExplicitAny]
 
 
 app.openapi = custom_openapi
+
+
+@app.get(path="/{react_path:path}")
+def serve_react_app(react_path: str) -> Response:
+    """Serves the React application.
+
+    Returns specific files if they exist in frontend/dist, otherwise
+    falls back to index.html for client-side routing.
+    """
+    if not _FRONTEND_DIST.is_dir():
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Frontend build directory not found.",
+        )
+
+    requested_file = _FRONTEND_DIST / react_path
+
+    if requested_file.is_file():
+        return FileResponse(path=requested_file)
+
+    index_file = _FRONTEND_DIST / "index.html"
+    if index_file.is_file():
+        return FileResponse(path=index_file)
+
+    raise HTTPException(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        detail="Frontend index.html build file not found.",
+    )

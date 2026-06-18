@@ -42,10 +42,9 @@ async def db_session(db_engine: AsyncEngine) -> AsyncGenerator[AsyncSession]:
 def _make_mock_vector_store(
     docs: list[Document], mocker: pytest_mock.MockerFixture
 ) -> MagicMock:
-    mock_retriever = mocker.AsyncMock()
-    mock_retriever.ainvoke = mocker.AsyncMock(return_value=docs)
     mock_vs = mocker.MagicMock()
-    mock_vs.get_retriever = mocker.MagicMock(return_value=mock_retriever)
+    scored_docs = [(doc, 0.95) for doc in docs]
+    mock_vs.asearch_with_scores = mocker.AsyncMock(return_value=scored_docs)
     return mock_vs
 
 

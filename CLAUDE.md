@@ -13,6 +13,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - **Start the API server**: `NO_COLOR=1 uv run fastapi dev backend/api > api.log 2>&1 &`
 - **Stop the API server**: `pkill -f "fastapi dev"`
 
+### Frontend (`frontend/`)
+
+- **Install deps**: `cd frontend && npm install`
+- **Dev server** (proxies `/api` to `http://127.0.0.1:8000`): `cd frontend && npm run dev` → `http://localhost:5173`
+- **Production build**: `cd frontend && npm run build` (outputs to `frontend/dist/`, served by FastAPI automatically)
+- **Type-check + build**: `npm run build` runs `tsc -b` before Vite, so it catches type errors
+- **Lint**: `cd frontend && npm run lint`
+
 ### Development Server (API)
 
 - ALWAYS append `&` at the end of the command to start the dev server. The workflow must not stop due to continuous logging.
@@ -24,7 +32,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Architecture
 
-The app is an async Python RAG pipeline exposed over HTTP via FastAPI.
+The app is an async Python RAG pipeline exposed over HTTP via FastAPI, with a React SPA frontend (`frontend/`) served as static files in production.
 
 **Document ingest flow:** `POST /v1/chats/{session_id}/documents` → `DocumentView` → `DocumentIngestor` → `TextChunker` → `VectorStore`
 
@@ -55,6 +63,22 @@ The app is an async Python RAG pipeline exposed over HTTP via FastAPI.
 - The SSE stream in `messages.py` uses a separate `async_session_factory()` context to persist the assistant reply after streaming completes — the request-scoped `db` session is already committed and cannot be reused inside the generator.
 - `picture_classification` and `picture_description` toggles are silently forced off when `generate_picture_images=False`.
 - File upload size is enforced twice: once via `Content-Length` header in middleware, once by streaming chunk accumulation in the route handler.
+
+**Frontend** (`frontend/src/`)
+
+- `types/api.ts` – TypeScript interfaces mirroring backend Pydantic schemas; keep in sync with `backend/api/schemas.py`.
+- `lib/api.ts` – fetch/XHR helpers. File upload uses `XMLHttpRequest` (not `fetch`) to expose upload-progress events.
+- `lib/sse.ts` – `streamMessage()`: `fetch` + `ReadableStream` SSE client. Uses `EventSource` cannot be used here because the endpoint is `POST`. Buffers incoming bytes, splits on `\n\n`, dispatches `onChunk` / `onDone` / `onError`. Pass an `AbortController.signal` to cancel.
+- `context/SessionContext.tsx` – Session list is client-only (no backend list endpoint), persisted to `localStorage` under key `rag_sessions`. Active session ID comes from the URL param `/chat/:sessionId`.
+- `hooks/useDocuments.ts` / `useMessages.ts` – TanStack Query wrappers. `useMessages` sets `staleTime: Infinity`; history is refreshed by calling `queryClient.invalidateQueries` after the SSE `done` event in `ChatContainer`.
+- `components/chat/ChatContainer.tsx` – owns all streaming state (`streamingContent`, `isStreaming`, `streamingDone`, `streamingSources`). The `StreamingBubble` is rendered alongside the history list while streaming; after `done`, history is invalidated and the bubble resets.
+- `app.py` (backend) – conditionally mounts `frontend/dist/` as static files at `/` if the directory exists. API routes registered before the mount take precedence.
+
+### Key Frontend Invariants
+
+- `EventSource` cannot be used for the SSE endpoint — it only supports GET. Always use the `fetch`+`ReadableStream` approach in `lib/sse.ts`.
+- The `ChatInput` settings panel controls `top_k` (1–50, default 4) and an optional `score_threshold` (0.0–1.0). These are passed directly into the `MessageRequest` body.
+- Session labels auto-update to the first 40 characters of the first question sent in that session.
 
 ## Testing
 
