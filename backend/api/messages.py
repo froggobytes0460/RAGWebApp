@@ -2,7 +2,7 @@ from collections.abc import AsyncGenerator
 import json
 from typing import cast
 
-from fastapi import status
+from fastapi import Request, status
 from fastapi.exceptions import HTTPException
 from fastapi.param_functions import Depends
 from fastapi.responses import StreamingResponse
@@ -14,6 +14,7 @@ from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from backend.api.documents import get_vector_store
+from backend.api.limiter import limiter
 from backend.api.schemas import (
     MessageHistoryItem,
     MessageRequest,
@@ -43,8 +44,12 @@ class MessageView:
     vector_store: VectorStore = cast(VectorStore, Depends(dependency=get_vector_store))
 
     @messages_router.post(path="/", status_code=status.HTTP_201_CREATED)
+    @limiter.limit(  # pyright: ignore[reportUnknownMemberType, reportUntypedFunctionDecorator]
+        limit_value="20/minute"
+    )
     async def create_message(
         self,
+        request: Request,  # pyright: ignore[reportUnusedParameter]
         session_id: str,
         body: MessageRequest,
     ) -> StreamingResponse:
@@ -144,6 +149,7 @@ class MessageView:
 
         return StreamingResponse(
             content=event_stream(),
+            status_code=status.HTTP_201_CREATED,
             media_type="text/event-stream",
             headers={
                 "Cache-Control": "no-cache",
@@ -152,7 +158,7 @@ class MessageView:
             },
         )
 
-    @messages_router.get(path="/")
+    @messages_router.get(path="/", status_code=status.HTTP_200_OK)
     async def list_messages(self, session_id: str) -> list[MessageHistoryItem]:
         """Retrieve the full ordered message history for a session."""
         stmt = (

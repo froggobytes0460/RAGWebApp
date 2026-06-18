@@ -50,7 +50,7 @@ class TestCreateMessage:
             json={"question": "What is the answer?"},
         )
 
-        assert resp.status_code == 200
+        assert resp.status_code == 201
         events = _parse_sse(resp.text)
         chunk_events = [e for e in events if e.get("event") == "chunk"]
         done_events = [e for e in events if e.get("event") == "done"]
@@ -113,7 +113,7 @@ class TestCreateMessage:
             url="/api/v1/chats/sess-persist/messages/",
             json={"question": "save me?"},
         )
-        assert resp.status_code == 200
+        assert resp.status_code == 201
 
         result = await db_session.exec(
             select(ChatMessage).where(ChatMessage.session_id == "sess-persist")
@@ -147,7 +147,7 @@ class TestCreateMessage:
             url="/api/v1/chats/new-session/messages/",
             json={"question": "hello?"},
         )
-        assert resp.status_code == 200
+        assert resp.status_code == 201
 
         session_row = await db_session.get(entity=ChatSession, ident="new-session")
         assert session_row is not None

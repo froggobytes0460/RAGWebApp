@@ -61,7 +61,7 @@ class IngestSettings(BaseModel):
 class VectorStoreSettings(BaseModel):
     """Settings for vector store."""
 
-    QDRANT_API_KEY_PATTERN: ClassVar[str] = r"^[A-Za-z0-9+/]{43,44}=?$"
+    QDRANT_API_KEY_PATTERN: ClassVar[str] = r"^[A-Za-z0-9+/_-]{43,44}=?$"
 
     api_key: Annotated[
         SecretStr | None, Field(description="API key for connecting to Qdrant Cloud.")
@@ -114,7 +114,7 @@ class VectorStoreSettings(BaseModel):
         if not isinstance(url_or_path, Path):
             host = url_or_path.host or ""
 
-            if "qdrant.tech" in host:
+            if "cloud.qdrant.io" in host:
                 if not self.api_key:
                     raise ValueError(
                         f"A 'qdrant_api_key' is required when connecting to Qdrant Cloud cluster ({host})."
