@@ -61,6 +61,11 @@ app.add_exception_handler(
 app.include_router(router=main_api)
 
 
+@app.get(path="/api/health", include_in_schema=False)
+def health_check() -> dict[str, str]:
+    return {"status": "ok"}
+
+
 @app.middleware(middleware_type="http")
 async def limit_upload_size(
     request: Request, call_next: Callable[[Request], Awaitable[Response]]
