@@ -8,7 +8,6 @@ from pathlib import Path
 from typing import Any, ClassVar, Literal, Self, cast
 
 from langchain_core.documents import Document
-from langchain_core.vectorstores import VectorStoreRetriever
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_qdrant import QdrantVectorStore
 from pydantic import BaseModel, ConfigDict, PrivateAttr
@@ -139,32 +138,57 @@ class VectorStore(BaseModel):
 
         return ids
 
-    def get_retriever(
-        self, session_id: str, k: int | None = None
-    ) -> VectorStoreRetriever:
-        search_kwargs: dict[str, int | models.Filter | float] = {
-            "k": k or self.k,
-            "filter": models.Filter(
-                must=[
-                    models.FieldCondition(
-                        key="metadata.session_id",
-                        match=models.MatchValue(value=session_id),
-                    )
-                ]
-            ),
-        }
+    async def asearch_with_scores(
+        self, query: str, session_id: str, k: int | None = None
+    ) -> list[tuple[Document, float]]:
+        top_k = k or self.k
+        session_filter = models.Filter(
+            must=[
+                models.FieldCondition(
+                    key="metadata.session_id",
+                    match=models.MatchValue(value=session_id),
+                )
+            ]
+        )
 
         if settings.search.search_type == "mmr":
-            search_kwargs["fetch_k"] = (k or self.k) * 4
-            search_kwargs["lambda_mult"] = settings.search.lambda_mult
+            fetch_k = top_k * 4
+            lambda_mult = settings.search.lambda_mult
+            docs: list[Document] = (
+                await self.vector_store.amax_marginal_relevance_search(
+                    query=query,
+                    k=top_k,
+                    fetch_k=fetch_k,
+                    lambda_mult=lambda_mult,
+                    filter=session_filter,
+                )
+            )
+            scored: list[tuple[Document, float]] = (
+                await self.vector_store.asimilarity_search_with_relevance_scores(
+                    query=query,
+                    k=fetch_k,
+                    filter=session_filter,
+                )
+            )
+            score_map = {d.page_content: s for d, s in scored}
+            return [(doc, score_map.get(doc.page_content, 0.0)) for doc in docs]
 
-        elif settings.search.search_type == "similarity_score_threshold":
-            search_kwargs["score_threshold"] = settings.search.score_threshold
-
-        return self.vector_store.as_retriever(
-            search_type=settings.search.search_type,
-            search_kwargs=search_kwargs,
+        results: list[tuple[Document, float]] = (
+            await self.vector_store.asimilarity_search_with_relevance_scores(
+                query=query,
+                k=top_k,
+                filter=session_filter,
+            )
         )
+
+        if settings.search.search_type == "similarity_score_threshold":
+            results = [
+                (doc, score)
+                for doc, score in results
+                if score >= settings.search.score_threshold
+            ]
+
+        return results
 
     async def adelete_session(self, session_id: str) -> models.UpdateResult:
         return await self._run_async(

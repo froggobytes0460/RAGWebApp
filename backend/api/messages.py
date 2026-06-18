@@ -50,13 +50,13 @@ class MessageView:
     ) -> StreamingResponse:
         """Save user message, retrieve vector context, stream LLM reply as SSE, save assistant reply."""
 
-        retriever = self.vector_store.get_retriever(
+        scored_docs = await self.vector_store.asearch_with_scores(
+            query=body.question,
             session_id=session_id,
             k=body.top_k,
         )
-        retrieved_docs: list[Document] = await retriever.ainvoke(input=body.question)
 
-        if not retrieved_docs:
+        if not scored_docs:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="No relevant documents found for this session. Upload documents first.",
@@ -65,14 +65,15 @@ class MessageView:
         chunks = [
             RetrievedChunk(
                 content=doc.page_content,
-                score=float(cast(dict[str, float], doc.metadata).get("score", 0.0)),
+                score=round(score, 4),
                 filename=str(
                     cast(StrictMetadata, doc.metadata).get("filename", "unknown")
                 ),
                 page_number=cast(dict[str, int], doc.metadata).get("page_number"),
             )
-            for doc in retrieved_docs
+            for doc, score in scored_docs
         ]
+        retrieved_docs: list[Document] = [doc for doc, _ in scored_docs]
 
         existing_session = await self.db.get(entity=ChatSession, ident=session_id)
         if not existing_session:
@@ -175,7 +176,8 @@ class MessageView:
                 content=m.content,
                 created_at=m.created_at,
                 retrieved_chunks=[
-                    RetrievedChunk(**c) for c in (m.retrieved_chunks or [])
+                    RetrievedChunk.model_validate(obj=c)
+                    for c in (m.retrieved_chunks or [])
                 ],
             )
             for m in messages
