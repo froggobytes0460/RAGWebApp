@@ -102,9 +102,9 @@ describe('api.uploadDocument', () => {
     return { getInstance: () => instance }
   }
 
-  it('resolves with IngestResponse on 201', async () => {
-    const payload = { document_id: 'doc-1', doc_count: 3 }
-    makeXHRMock(201, JSON.stringify(payload))
+  it('resolves with IngestJobResponse on 202', async () => {
+    const payload = { job_id: 'job-1' }
+    makeXHRMock(202, JSON.stringify(payload))
     await expect(api.uploadDocument('sess1', new File([''], 'test.pdf'))).resolves.toEqual(payload)
   })
 
@@ -115,7 +115,7 @@ describe('api.uploadDocument', () => {
 
   it('reports upload progress', async () => {
     const onProgress = vi.fn()
-    makeXHRMock(201, JSON.stringify({ document_id: 'x', doc_count: 1 }), (xhr) => {
+    makeXHRMock(202, JSON.stringify({ job_id: 'job-1' }), (xhr) => {
       xhr.upload.onprogress?.({ lengthComputable: true, loaded: 50, total: 100 })
       xhr.onload?.()
     })

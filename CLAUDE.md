@@ -101,6 +101,27 @@ Tests are split into `tests/api/` and `tests/core/`, each with their own `confte
 
 Coverage must stay ≥ 80% (`--cov-fail-under=80`). `asyncio_mode = "auto"` is set in `pyproject.toml` so async test functions need no decorator.
 
+## Docker / Production
+
+The `docker-compose.yml` runs four services: `nginx` (reverse proxy on port 80), `api` (FastAPI on port 8000, internal), `qdrant` (vector store, internal), and `postgres` (chat history DB, internal). In production the database backend switches from SQLite to PostgreSQL — set `DATABASE__URL=postgresql+asyncpg://...` in `.env.docker`.
+
+- **Build and start**: `docker compose up --build`
+- **Stop**: `docker compose down`
+- HuggingFace and Docling model caches are persisted in named volumes (`hf_cache`, `docling_cache`) to avoid re-downloading on restart.
+- The API health probe hits `GET /api/health`; nginx only starts after it passes.
+
+## Environment Setup
+
+Copy `.env.example` to `.env` (local dev) or `.env.docker` (Docker). Key variables:
+
+| Variable                        | Default                                  | Notes                                                   |
+| :-----------------------------: | :--------------------------------------: | :-----------------------------------------------------: |
+| `DATABASE__URL`                 | `sqlite+aiosqlite:///./rag.db`           | Switch to `postgresql+asyncpg://...` in Docker          |
+| `VECTOR_STORE__URL_OR_PATH`     | `./.qdrant_local/`                       | Set to `http://qdrant:6333/` in Docker                  |
+| `VECTOR_STORE__EMBEDDING_MODEL` | `sentence-transformers/all-MiniLM-L6-v2` | Must match `VECTOR_STORE__VECTOR_SIZE` (384 for MiniLM) |
+| `LLM__PROVIDER`                 | `groq`                                   | Options: `groq`, `openrouter`                           |
+| `LLM__API_KEY`                  | —                                        | Required                                                |
+
 ## Important Notes
 
 - Pre‑commit enforces `black` formatting and `basedpyright` type checking; both must pass before a commit lands.

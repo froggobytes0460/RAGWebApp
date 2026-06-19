@@ -103,6 +103,24 @@ class StreamChunk(BaseModel):
     )
 
 
+class IngestJobResponse(BaseModel):
+    """Returned immediately (HTTP 202) when a document upload is accepted."""
+
+    job_id: str
+    status: Literal["queued"] = "queued"
+
+
+class JobProgressResponse(BaseModel):
+    """SSE payload emitted during background ingestion."""
+
+    job_id: str
+    filename: str
+    status: Literal["queued", "processing", "done", "failed"]
+    progress: int
+    chunk_count: int | None
+    error: str | None
+
+
 class MessageHistoryItem(BaseModel):
     """A single message entry returned from GET /messages history."""
 

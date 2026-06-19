@@ -1,4 +1,9 @@
-import type { DocumentListItem, IngestResponse, MessageHistoryItem } from '../types/api'
+import type {
+  DocumentListItem,
+  IngestJobResponse,
+  JobProgressEvent,
+  MessageHistoryItem,
+} from '../types/api'
 
 const BASE = '/api/v1/chats'
 
@@ -21,7 +26,7 @@ export const api = {
     sessionId: string,
     file: File,
     onProgress?: (pct: number) => void,
-  ): Promise<IngestResponse> => {
+  ): Promise<IngestJobResponse> => {
     return new Promise((resolve, reject) => {
       const xhr = new XMLHttpRequest()
       const form = new FormData()
@@ -32,8 +37,8 @@ export const api = {
         }
       }
       xhr.onload = () => {
-        if (xhr.status === 201) {
-          resolve(JSON.parse(xhr.responseText) as IngestResponse)
+        if (xhr.status === 202) {
+          resolve(JSON.parse(xhr.responseText) as IngestJobResponse)
         } else {
           const body = JSON.parse(xhr.responseText) as { detail?: string }
           reject(new Error(body.detail ?? `HTTP ${xhr.status}`))
@@ -43,6 +48,55 @@ export const api = {
       xhr.open('POST', `${BASE}/${sessionId}/documents/`)
       xhr.send(form)
     })
+  },
+
+  streamJobProgress: (
+    sessionId: string,
+    jobId: string,
+    handlers: {
+      onProgress: (event: JobProgressEvent) => void
+      onDone: (event: JobProgressEvent) => void
+      onError: (err: Error) => void
+    },
+    signal?: AbortSignal,
+  ): Promise<void> => {
+    return fetch(`${BASE}/${sessionId}/documents/jobs/${jobId}/progress`, { signal })
+      .then((res) => {
+        if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`)
+        const reader = res.body.getReader()
+        const decoder = new TextDecoder()
+        let buffer = ''
+
+        const pump = (): Promise<void> =>
+          reader.read().then(({ done, value }) => {
+            if (done) return
+            buffer += decoder.decode(value, { stream: true })
+            const parts = buffer.split('\n\n')
+            buffer = parts.pop() ?? ''
+            for (const part of parts) {
+              const dataLine = part.split('\n').find((l) => l.startsWith('data:'))
+              if (!dataLine) continue
+              try {
+                const evt = JSON.parse(dataLine.slice(5).trim()) as JobProgressEvent
+                if (evt.status === 'done' || evt.status === 'failed') {
+                  handlers.onDone(evt)
+                  return
+                }
+                handlers.onProgress(evt)
+              } catch {
+                // ignore malformed frames
+              }
+            }
+            return pump()
+          })
+
+        return pump()
+      })
+      .catch((err: unknown) => {
+        if (err instanceof Error && err.name !== 'AbortError') {
+          handlers.onError(err)
+        }
+      })
   },
 
   deleteDocument: async (sessionId: string, filename: string): Promise<void> => {

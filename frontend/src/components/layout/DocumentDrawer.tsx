@@ -10,7 +10,7 @@ interface DocumentDrawerProps {
 }
 
 export function DocumentDrawer({ sessionId, open, onClose }: DocumentDrawerProps) {
-  const { query, uploadMutation, deleteMutation, uploadProgress } = useDocuments(sessionId)
+  const { query, uploadMutation, deleteMutation, uploadProgress, activeJobs } = useDocuments(sessionId)
 
   return (
     <>
@@ -36,7 +36,7 @@ export function DocumentDrawer({ sessionId, open, onClose }: DocumentDrawerProps
             <p className="mb-2 text-xs font-medium uppercase tracking-wide text-gray-500">
               Uploaded files
             </p>
-            <DocumentList query={query} deleteMutation={deleteMutation} />
+            <DocumentList query={query} deleteMutation={deleteMutation} activeJobs={activeJobs} />
           </div>
         </div>
       </aside>

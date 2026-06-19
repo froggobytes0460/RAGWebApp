@@ -2,13 +2,13 @@ import { useRef, useState, useCallback } from 'react'
 import { Upload } from 'lucide-react'
 import { ErrorBanner } from '../ui/ErrorBanner'
 import type { UseMutationResult } from '@tanstack/react-query'
-import type { IngestResponse } from '../../types/api'
+import type { IngestJobResponse } from '../../types/api'
 
 const ACCEPTED = '.pdf,.docx,.md,.xlsx'
 const MAX_MB = 50
 
 interface UploadZoneProps {
-  uploadMutation: UseMutationResult<IngestResponse, Error, File>
+  uploadMutation: UseMutationResult<IngestJobResponse, Error, File>
   uploadProgress: number | null
 }
 

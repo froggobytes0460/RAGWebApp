@@ -20,8 +20,10 @@ from slowapi.errors import RateLimitExceeded
 from starlette.types import ExceptionHandler
 
 from backend.api.documents import documents_router, get_vector_store
+from backend.api.state import AppState, TypedFastAPI
 from backend.api.limiter import limiter
 from backend.api.messages import messages_router
+from backend.core.ingestion_worker import run_ingestion_worker
 from backend.core.chunking import (
     _get_cached_tokenizer,  # pyright: ignore[reportPrivateUsage]
 )
@@ -36,9 +38,7 @@ _FRONTEND_DIST = BASE_DIR / "frontend/dist"
 
 
 @asynccontextmanager
-async def lifespan(
-    app: FastAPI,  # pyright: ignore[reportUnusedParameter]
-) -> AsyncGenerator[None]:
+async def lifespan(app: TypedFastAPI) -> AsyncGenerator[None]:
     vector_store = get_vector_store()
     _ = await vector_store.ainit_collection()
     _ = await asyncio.to_thread(_get_huggingface_embeddings)
@@ -53,7 +53,24 @@ async def lifespan(
         replace_existing=True,
     )
     scheduler.start()
+
+    typed_state = AppState()
+    app.typed_state = typed_state
+    worker_task = asyncio.create_task(
+        coro=run_ingestion_worker(
+            queue=typed_state.job_queue,
+            file_store=typed_state.file_store,
+            vector_store=vector_store,
+        )
+    )
+
     yield
+
+    _ = worker_task.cancel()
+    try:
+        await worker_task
+    except asyncio.CancelledError:
+        pass
     scheduler.shutdown(wait=False)
     await vector_store.aclose()
     await close_db()
@@ -65,8 +82,8 @@ main_api.include_router(router=documents_router)
 main_api.include_router(router=messages_router)
 
 # App initialization
-app = FastAPI(lifespan=lifespan)
-app.state.limiter = limiter
+app = TypedFastAPI(lifespan=lifespan)
+app.state.limiter = limiter  # slowapi reads this from state by convention
 app.add_exception_handler(
     exc_class_or_status_code=RateLimitExceeded,
     handler=cast(ExceptionHandler, _rate_limit_exceeded_handler),

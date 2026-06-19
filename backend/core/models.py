@@ -6,7 +6,7 @@ from typing import Any, ClassVar, Literal
 import uuid
 
 import sqlalchemy as sa
-from sqlmodel import CheckConstraint, Column, Field, SQLModel
+from sqlmodel import CheckConstraint, Column, Field, SQLModel, String
 
 
 class ChatSession(SQLModel, table=True):
@@ -55,6 +55,33 @@ class ChatMessage(SQLModel, table=True):
     )
     created_at: datetime = Field(
         default_factory=lambda: datetime.now(timezone.utc),
+        sa_column=Column(
+            sa.DateTime(timezone=True),
+            server_default=sa.func.now(),
+            nullable=False,
+        ),
+    )
+
+
+class IngestionJob(SQLModel, table=True):
+    __tablename__: ClassVar[str] = "ingestion_jobs"
+    __table_args__: ClassVar[dict[str, Any]] = {"extend_existing": True}
+
+    id: str = Field(
+        default_factory=lambda: str(uuid.uuid4()),
+        primary_key=True,
+    )
+    session_id: str = Field(index=True)
+    filename: str
+    status: Literal["queued", "processing", "done", "failed"] = Field(
+        default="queued",
+        sa_column=Column(String, nullable=False),
+    )
+    progress: int = Field(default=0)
+    chunk_count: int | None = Field(default=None)
+    error: str | None = Field(default=None, sa_column=Column(sa.Text, nullable=True))
+    created_at: datetime = Field(
+        default_factory=lambda: datetime.now(tz=timezone.utc),
         sa_column=Column(
             sa.DateTime(timezone=True),
             server_default=sa.func.now(),

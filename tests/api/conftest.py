@@ -16,6 +16,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from backend.api import app
 from backend.api.documents import get_vector_store
+from backend.api.state import AppState
 from backend.core.database import get_session
 
 
@@ -92,6 +93,10 @@ async def client(
 
     app.dependency_overrides[get_session] = _override_get_session
     app.dependency_overrides[get_vector_store] = lambda: mock_vs
+
+    # Provide in-memory job queue and file store so document upload tests work
+    # without starting the full lifespan.
+    app.typed_state = AppState()
 
     async with AsyncClient(
         transport=ASGITransport(app=app),
