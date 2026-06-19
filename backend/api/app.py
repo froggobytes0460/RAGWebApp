@@ -5,6 +5,9 @@ from collections.abc import AsyncGenerator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from typing import Any, cast
 
+from apscheduler.schedulers.asyncio import (  # pyright: ignore[reportMissingTypeStubs]
+    AsyncIOScheduler,
+)
 from fastapi import status
 from fastapi.applications import FastAPI
 from fastapi.exceptions import HTTPException
@@ -41,7 +44,17 @@ async def lifespan(
     _ = await asyncio.to_thread(_get_huggingface_embeddings)
     _ = await asyncio.to_thread(_get_cached_tokenizer)
     await init_db()
+    scheduler = AsyncIOScheduler()
+    _ = scheduler.add_job(  # pyright: ignore[reportUnknownMemberType]
+        func=vector_store.aclean_up_stale_vectors,
+        trigger="interval",
+        seconds=settings.vector_store.ttl,
+        id="stale_vector_cleanup",
+        replace_existing=True,
+    )
+    scheduler.start()
     yield
+    scheduler.shutdown(wait=False)
     await vector_store.aclose()
     await close_db()
 
