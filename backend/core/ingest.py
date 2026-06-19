@@ -1,28 +1,18 @@
 """Document ingestion utilities for loading and processing files efficiently."""
 
-from collections.abc import AsyncIterator
+import asyncio
+from collections.abc import AsyncIterator, Coroutine
 from pathlib import Path
-from typing import Annotated, ClassVar, Self, TypeAlias, cast
+from typing import Annotated, Callable, ClassVar, Self, TypeAlias, cast
 
-from docling.datamodel.base_models import InputFormat
-from docling.datamodel.pipeline_options import (
-    ConvertPipelineOptions,
-    PdfPipelineOptions,
-)
-from docling.document_converter import (
-    DocumentConverter,
-    ExcelFormatOption,
-    FormatOption,
-    MarkdownFormatOption,
-    PdfFormatOption,
-    WordFormatOption,
-)
-from langchain_core.documents import Document
-from langchain_docling.loader import DoclingLoader
+import docx
+from langchain_core.documents.base import Document
+import openpyxl
 from pydantic.fields import Field, computed_field
 from pydantic.functional_validators import AfterValidator, model_validator
 from pydantic.main import BaseModel
 from pydantic.types import FilePath
+from pypdf import PdfReader
 
 from backend.core.config import IngestSettings, settings
 
@@ -53,7 +43,9 @@ def verify_file_integrity(path: Path) -> Path:
 
 
 # Type Aliases
-VerifiedFilePath: TypeAlias = Annotated[FilePath, AfterValidator(verify_file_integrity)]
+VerifiedFilePath: TypeAlias = Annotated[
+    FilePath, AfterValidator(func=verify_file_integrity)
+]
 MetadataValue: TypeAlias = (
     str | int | float | bool | None | list[object] | dict[str, object]
 )
@@ -87,41 +79,122 @@ class DocumentIngestor(BaseModel):
             )
         return self
 
-    def _get_optimized_loader(self) -> DoclingLoader:
-        pdf_pipeline_options = PdfPipelineOptions(
-            do_ocr=self.config.do_ocr,
-            do_table_structure=self.config.do_table_structure,
-            generate_page_images=self.config.generate_page_images,
-            generate_picture_images=self.config.generate_picture_images,
-        )
+    async def _load_pdf(self, source: str) -> list[Document]:
+        extract_images = self.config.pdf_extract_images
 
-        other_pipeline_options = ConvertPipelineOptions(
-            do_picture_classification=self.config.do_picture_classification,
-            do_picture_description=self.config.do_picture_description,
-        )
+        def _parse() -> list[Document]:
+            reader = PdfReader(stream=self.file_path)
+            total_pages = len(reader.pages)
+            docs: list[Document] = []
+            for i, page in enumerate(reader.pages):
+                parts = [page.extract_text() or ""]
+                if extract_images:
+                    for img in page.images:
+                        if img.data:
+                            parts.append(f"[image:{img.name}]")
+                docs.append(
+                    Document(
+                        page_content="\n".join(filter(None, parts)),
+                        metadata={
+                            "source": source,
+                            "file_type": "pdf",
+                            "page": i + 1,
+                            "total_pages": total_pages,
+                        },
+                    )
+                )
+            return docs
 
-        format_options: dict[InputFormat, FormatOption] = {
-            InputFormat.PDF: PdfFormatOption(pipeline_options=pdf_pipeline_options),
-            InputFormat.DOCX: WordFormatOption(pipeline_options=other_pipeline_options),
-            InputFormat.MD: MarkdownFormatOption(
-                pipeline_options=other_pipeline_options
-            ),
-            InputFormat.XLSX: ExcelFormatOption(
-                pipeline_options=other_pipeline_options
-            ),
-        }
+        return await asyncio.to_thread(_parse)
 
-        return DoclingLoader(
-            file_path=[str(self.file_path)],
-            converter=DocumentConverter(format_options=format_options),
-        )
+    async def _load_docx(self, source: str) -> list[Document]:
+        def _parse() -> list[Document]:
+            doc = docx.Document(docx=str(self.file_path))
+            core_props = doc.core_properties
+            parts: list[str] = [p.text for p in doc.paragraphs if p.text]
+            if self.config.docx_include_tables:
+                for table in doc.tables:
+                    for row in table.rows:
+                        row_text = "\t".join(c.text for c in row.cells if c.text)
+                        if row_text:
+                            parts.append(row_text)
+            if self.config.docx_include_headers_footers:
+                for section in doc.sections:
+                    for hf in (section.header, section.footer):
+                        for p in hf.paragraphs:
+                            if p.text:
+                                parts.append(p.text)
+            return [
+                Document(
+                    page_content="\n".join(parts),
+                    metadata={
+                        "source": source,
+                        "file_type": "docx",
+                        "page": 1,
+                        "author": core_props.author or "",
+                        "title": core_props.title or "",
+                    },
+                )
+            ]
+
+        return await asyncio.to_thread(_parse)
+
+    async def _load_md(self, source: str) -> list[Document]:
+        text = await asyncio.to_thread(self.file_path.read_text, "utf-8")
+        return [
+            Document(
+                page_content=text,
+                metadata={
+                    "source": source,
+                    "file_type": "markdown",
+                    "page": 1,
+                },
+            )
+        ]
+
+    async def _load_xlsx(self, source: str) -> list[Document]:
+        include_empty_rows = self.config.xlsx_include_empty_rows
+
+        def _parse() -> list[Document]:
+            wb = openpyxl.load_workbook(
+                filename=self.file_path, read_only=True, data_only=True
+            )
+            total_sheets = len(wb.sheetnames)
+            docs: list[Document] = []
+            for sheet_index, sheet in enumerate(wb.worksheets):
+                rows: list[str] = []
+                for row in sheet.iter_rows():
+                    row_text = "\t".join(str(cell.value or "") for cell in row)
+                    if include_empty_rows or row_text.strip():
+                        rows.append(row_text)
+                docs.append(
+                    Document(
+                        page_content="\n".join(rows),
+                        metadata={
+                            "source": source,
+                            "file_type": "xlsx",
+                            "page": sheet_index + 1,
+                            "sheet": sheet.title,
+                            "total_sheets": total_sheets,
+                        },
+                    )
+                )
+            return docs
+
+        return await asyncio.to_thread(_parse)
 
     async def ingest_lazy(self) -> AsyncIterator[Document]:
-        loader: DoclingLoader = self._get_optimized_loader()
+        loaders: dict[str, Callable[[str], Coroutine[None, None, list[Document]]]] = {
+            ".pdf": self._load_pdf,
+            ".docx": self._load_docx,
+            ".md": self._load_md,
+            ".xlsx": self._load_xlsx,
+        }
+        documents = await loaders[self.extension](str(self.file_path))
 
         current_page_tracking = 1
 
-        async for document in loader.alazy_load():
+        for document in documents:
             metadata: StrictMetadata = cast(StrictMetadata, document.metadata)
 
             resolved_page = self._extract_page_number(

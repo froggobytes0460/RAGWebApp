@@ -18,3 +18,4 @@ frontend/dist/
 frontend/coverage/
 .DS_Store
 .git/
+logs/

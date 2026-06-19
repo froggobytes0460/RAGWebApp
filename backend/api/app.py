@@ -9,7 +9,6 @@ from apscheduler.schedulers.asyncio import (  # pyright: ignore[reportMissingTyp
     AsyncIOScheduler,
 )
 from fastapi import status
-from fastapi.applications import FastAPI
 from fastapi.exceptions import HTTPException
 from fastapi.openapi.utils import get_openapi
 from fastapi.requests import Request
@@ -29,9 +28,10 @@ from backend.core.chunking import (
 )
 from backend.core.config import BASE_DIR, settings
 from backend.core.database import close_db, init_db
+from backend.core.logging import app_logger
 import backend.core.models  # pyright: ignore[reportUnusedImport]
 from backend.core.vector_store import (
-    _get_huggingface_embeddings,  # pyright: ignore[reportPrivateUsage]
+    _get_fastembed_embeddings,  # pyright: ignore[reportPrivateUsage]
 )
 
 _FRONTEND_DIST = BASE_DIR / "frontend/dist"
@@ -39,11 +39,15 @@ _FRONTEND_DIST = BASE_DIR / "frontend/dist"
 
 @asynccontextmanager
 async def lifespan(app: TypedFastAPI) -> AsyncGenerator[None]:
+    app_logger.setup(log_settings=settings.log)
+    app_logger.lifecycle("Application startup", level=settings.log.level)
+
     vector_store = get_vector_store()
     _ = await vector_store.ainit_collection()
-    _ = await asyncio.to_thread(_get_huggingface_embeddings)
+    _ = await asyncio.to_thread(_get_fastembed_embeddings)
     _ = await asyncio.to_thread(_get_cached_tokenizer)
     await init_db()
+
     scheduler = AsyncIOScheduler()
     _ = scheduler.add_job(  # pyright: ignore[reportUnknownMemberType]
         func=vector_store.aclean_up_stale_vectors,
@@ -53,19 +57,23 @@ async def lifespan(app: TypedFastAPI) -> AsyncGenerator[None]:
         replace_existing=True,
     )
     scheduler.start()
+    app_logger.lifecycle(
+        "Stale vector cleanup scheduled", every_seconds=settings.vector_store.ttl
+    )
 
-    typed_state = AppState()
-    app.typed_state = typed_state
+    app.typed_state = AppState()
     worker_task = asyncio.create_task(
         coro=run_ingestion_worker(
-            queue=typed_state.job_queue,
-            file_store=typed_state.file_store,
+            queue=app.typed_state.job_queue,
+            file_store=app.typed_state.file_store,
             vector_store=vector_store,
         )
     )
+    app_logger.lifecycle("Ingestion worker started")
 
     yield
 
+    app_logger.lifecycle("Application shutdown initiated")
     _ = worker_task.cancel()
     try:
         await worker_task
@@ -74,6 +82,7 @@ async def lifespan(app: TypedFastAPI) -> AsyncGenerator[None]:
     scheduler.shutdown(wait=False)
     await vector_store.aclose()
     await close_db()
+    app_logger.shutdown()
 
 
 # Routers

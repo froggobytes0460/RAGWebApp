@@ -21,41 +21,55 @@ BASE_DIR = Path(__file__).parents[2]
 ENV_FILE = BASE_DIR / ".env"
 
 
+class LogSettings(BaseModel):
+    level: Annotated[
+        Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
+        Field(description="Log level."),
+    ] = "INFO"
+    file_path: Path | None = BASE_DIR / "logs/app.logs"
+    max_bytes: Annotated[int, Field(gt=0)] = 10 * 1024 * 1024
+    backup_count: Annotated[int, Field(ge=0)] = 5
+
+    @field_validator("file_path", mode="after")
+    @classmethod
+    def ensure_file_path_resolved(cls, v: Path | None) -> Path | None:
+        if not v:
+            return v
+
+        resolved_path = v.resolve()
+        resolved_path.parent.mkdir(parents=True, exist_ok=True)
+        return resolved_path
+
+
 class IngestSettings(BaseModel):
     max_file_size: Annotated[
         float, Field(gt=0, description="Maximum filesize for each file (in MB).")
     ] = 50
 
-    do_ocr: Annotated[
-        bool, Field(description="Enable optical character recognition for scans.")
+    # PDF options
+    pdf_extract_images: Annotated[
+        bool,
+        Field(description="Attempt to extract text embedded in PDF images via pypdf."),
     ] = False
 
-    do_table_structure: Annotated[
-        bool, Field(description="Extract structural table grids into data layers.")
+    # DOCX options
+    docx_include_headers_footers: Annotated[
+        bool,
+        Field(
+            description="Include text from header and footer sections of DOCX files."
+        ),
     ] = False
 
-    generate_page_images: Annotated[
-        bool, Field(description="Render individual page images into memory.")
-    ] = False
+    docx_include_tables: Annotated[
+        bool,
+        Field(description="Extract and include text from tables in DOCX files."),
+    ] = True
 
-    generate_picture_images: Annotated[
-        bool, Field(description="Extract standalone image crops from documents.")
+    # XLSX options
+    xlsx_include_empty_rows: Annotated[
+        bool,
+        Field(description="Include rows where all cells are empty in XLSX output."),
     ] = False
-
-    do_picture_classification: Annotated[
-        bool, Field(description="Run classification algorithms on embedded graphics.")
-    ] = False
-
-    do_picture_description: Annotated[
-        bool, Field(description="Generate textual descriptions for layout pictures.")
-    ] = False
-
-    @model_validator(mode="after")
-    def validate_picture_dependencies(self) -> Self:
-        if not self.generate_picture_images:
-            self.do_picture_classification = False
-            self.do_picture_description = False
-        return self
 
 
 class VectorStoreSettings(BaseModel):
@@ -76,8 +90,8 @@ class VectorStoreSettings(BaseModel):
 
     embedding_model: Annotated[
         str,
-        Field(description="HuggingFace model ID used to compute text vector profiles."),
-    ] = "sentence-transformers/all-MiniLM-L6-v2"
+        Field(description="FastEmbed model name used to compute text vector profiles."),
+    ] = "BAAI/bge-small-en-v1.5"
 
     normalize_embeddings: Annotated[
         bool,
@@ -148,8 +162,10 @@ class VectorStoreSettings(BaseModel):
 class TextChunkSettings(BaseModel):
     tokenizer_model: Annotated[
         str,
-        Field(description="HuggingFace model ID used to tokenize."),
-    ] = "BAAI/bge-large-en-v1.5"
+        Field(
+            description="Model ID used to tokenize text chunks (via tokenizers library)."
+        ),
+    ] = "BAAI/bge-small-en-v1.5"
 
     chunk_size: Annotated[int, Field(gt=0, description="Size of each chunk size.")]
 
@@ -237,7 +253,7 @@ class LLMSettings(BaseModel):
 class DatabaseSettings(BaseModel):
     """Settings for the relational database (SQLite or PostgreSQL)."""
 
-    url: Annotated[
+    uri: Annotated[
         SqliteDsn | PostgresDsn,
         Field(
             description=(
@@ -253,7 +269,7 @@ class DatabaseSettings(BaseModel):
         Field(description="Log all SQL statements to stdout. Useful for debugging."),
     ] = False
 
-    @field_validator("url")
+    @field_validator("uri")
     @classmethod
     def validate_url(cls, v: SqliteDsn | PostgresDsn) -> SqliteDsn | PostgresDsn:
         scheme = str(v).split("://")[0]
@@ -268,6 +284,8 @@ class DatabaseSettings(BaseModel):
 
 class Settings(BaseSettings):
     """Global settings parsed from environment variables."""
+
+    log: LogSettings = LogSettings()
 
     database: DatabaseSettings = DatabaseSettings()
 

@@ -1,46 +1,49 @@
 import asyncio
 from functools import lru_cache
-import threading
-from typing import ClassVar, cast
 
 from langchain_core.documents import Document
-from langchain_text_splitters import RecursiveCharacterTextSplitter, TextSplitter
-from transformers import PreTrainedTokenizerBase
-from transformers.models import AutoTokenizer
+from semantic_text_splitter import TextSplitter
+from tokenizers import Tokenizer
 
 from backend.core.config import settings
-
-_INIT_LOCK = threading.Lock()
+from backend.core.logging import app_logger
 
 
 @lru_cache(maxsize=1)
-def _get_cached_tokenizer() -> PreTrainedTokenizerBase:
-    return cast(
-        PreTrainedTokenizerBase,
-        AutoTokenizer.from_pretrained(  # pyright: ignore[reportUnknownMemberType]
-            pretrained_model_name_or_path=settings.text_chunk.tokenizer_model
-        ),
+def _get_cached_tokenizer() -> Tokenizer:
+    app_logger.info("Loading tokenizer: %s", settings.text_chunk.tokenizer_model)
+    return Tokenizer.from_pretrained(settings.text_chunk.tokenizer_model)
+
+
+@lru_cache(maxsize=1)
+def _get_splitter() -> TextSplitter:
+    tokenizer = _get_cached_tokenizer()
+    return TextSplitter.from_huggingface_tokenizer(  # pyright: ignore[reportUnknownMemberType]
+        tokenizer,
+        capacity=settings.text_chunk.chunk_size,
+        overlap=settings.text_chunk.chunk_overlap,
     )
 
 
 class TextChunker:
-    _recursive_text_splitter: ClassVar[TextSplitter | None] = None
+    @staticmethod
+    def _chunk_document(doc: Document) -> list[Document]:
+        splitter = _get_splitter()
+        return [
+            Document(page_content=p, metadata=doc.metadata)
+            for p in splitter.chunks(text=doc.page_content)
+            if p.strip()
+        ]
 
     @classmethod
-    def _get_splitter_recursive(cls) -> TextSplitter:
-        if cls._recursive_text_splitter is None:
-            with _INIT_LOCK:
-                if cls._recursive_text_splitter is None:
-                    cls._recursive_text_splitter = (
-                        RecursiveCharacterTextSplitter.from_huggingface_tokenizer(
-                            tokenizer=_get_cached_tokenizer(),
-                            chunk_size=settings.text_chunk.chunk_size,
-                            chunk_overlap=settings.text_chunk.chunk_overlap,
-                        )
-                    )
-        return cls._recursive_text_splitter
+    def _split_documents(cls, documents: list[Document]) -> list[Document]:
+        result: list[Document] = []
+        for doc in documents:
+            result.extend(cls._chunk_document(doc))
+        app_logger.debug(
+            "Split %d document(s) into %d chunk(s)", len(documents), len(result)
+        )
+        return result
 
     async def achunk_text(self, documents: list[Document]) -> list[Document]:
-        return await asyncio.to_thread(
-            self._get_splitter_recursive().split_documents, documents
-        )
+        return await asyncio.to_thread(self._split_documents, documents)

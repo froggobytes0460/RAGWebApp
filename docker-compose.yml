@@ -8,6 +8,8 @@ services:
     depends_on:
       api:
         condition: service_healthy
+    networks:
+      - frontend
 
   api:
     build:
@@ -16,6 +18,8 @@ services:
     expose:
       - "8000"
     env_file: .env.docker
+    environment:
+      DATABASE__URI: postgresql+asyncpg://raguser:ragpassword@postgres:5432/ragdb
     depends_on:
       qdrant:
         condition: service_healthy
@@ -27,9 +31,9 @@ services:
       timeout: 10s
       retries: 5
       start_period: 60s
-    volumes:
-      - hf_cache:/root/.cache/huggingface
-      - docling_cache:/root/.cache/docling
+    networks:
+      - frontend
+      - backend
 
   postgres:
     image: postgres:17-alpine
@@ -46,6 +50,8 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    networks:
+      - backend
 
   qdrant:
     image: qdrant/qdrant:latest
@@ -58,6 +64,14 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    networks:
+      - backend
+
+networks:
+  frontend:
+    driver: bridge
+  backend:
+    driver: bridge
 
 volumes:
   qdrant_data:

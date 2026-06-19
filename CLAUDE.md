@@ -103,7 +103,7 @@ Coverage must stay ≥ 80% (`--cov-fail-under=80`). `asyncio_mode = "auto"` is s
 
 ## Docker / Production
 
-The `docker-compose.yml` runs four services: `nginx` (reverse proxy on port 80), `api` (FastAPI on port 8000, internal), `qdrant` (vector store, internal), and `postgres` (chat history DB, internal). In production the database backend switches from SQLite to PostgreSQL — set `DATABASE__URL=postgresql+asyncpg://...` in `.env.docker`.
+The `docker-compose.yml` runs four services: `nginx` (reverse proxy on port 80), `api` (FastAPI on port 8000, internal), `qdrant` (vector store, internal), and `postgres` (chat history DB, internal). In production the database backend switches from SQLite to PostgreSQL — set `DATABASE__URI=postgresql+asyncpg://...` in `.env.docker`.
 
 - **Build and start**: `docker compose up --build`
 - **Stop**: `docker compose down`
@@ -116,7 +116,7 @@ Copy `.env.example` to `.env` (local dev) or `.env.docker` (Docker). Key variabl
 
 | Variable                        | Default                                  | Notes                                                   |
 | :-----------------------------: | :--------------------------------------: | :-----------------------------------------------------: |
-| `DATABASE__URL`                 | `sqlite+aiosqlite:///./rag.db`           | Switch to `postgresql+asyncpg://...` in Docker          |
+| `DATABASE__URI`                 | `sqlite+aiosqlite:///./rag.db`           | Switch to `postgresql+asyncpg://...` in Docker          |
 | `VECTOR_STORE__URL_OR_PATH`     | `./.qdrant_local/`                       | Set to `http://qdrant:6333/` in Docker                  |
 | `VECTOR_STORE__EMBEDDING_MODEL` | `sentence-transformers/all-MiniLM-L6-v2` | Must match `VECTOR_STORE__VECTOR_SIZE` (384 for MiniLM) |
 | `LLM__PROVIDER`                 | `groq`                                   | Options: `groq`, `openrouter`                           |

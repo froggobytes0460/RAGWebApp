@@ -6,12 +6,13 @@ from sqlmodel import SQLModel
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from backend.core.config import settings
+from backend.core.logging import app_logger
 
 
 @lru_cache(maxsize=1)
 def get_engine() -> AsyncEngine:
     return create_async_engine(
-        url=str(settings.database.url),
+        url=str(settings.database.uri),
         echo=settings.database.echo_sql,
     )
 
@@ -26,11 +27,13 @@ def get_session_factory() -> async_sessionmaker[AsyncSession]:
 
 
 async def init_db() -> None:
+    app_logger.lifecycle("Database initializing")
     async with get_engine().begin() as conn:
         await conn.run_sync(fn=SQLModel.metadata.create_all)
 
 
 async def close_db() -> None:
+    app_logger.lifecycle("Database connection closed")
     await get_engine().dispose()
 
 
