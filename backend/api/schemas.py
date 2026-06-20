@@ -38,9 +38,8 @@ class MessageRequest(BaseModel):
     ]
 
     top_k: Annotated[
-        int,
+        NonZeroOrNegativeInt,
         Field(
-            gt=0,
             le=50,
             description="Number of context chunks to retrieve from the vector database.",
         ),
@@ -95,7 +94,7 @@ class StreamChunk(BaseModel):
     """SSE payload shapes for the streaming message endpoint."""
 
     text: Annotated[
-        str,
+        NonEmptyStr,
         Field(description="LLM token chunk emitted during streaming."),
     ] = ""
     retrieved_chunks: list[RetrievedChunk] = Field(
@@ -106,19 +105,19 @@ class StreamChunk(BaseModel):
 class IngestJobResponse(BaseModel):
     """Returned immediately (HTTP 202) when a document upload is accepted."""
 
-    job_id: str
+    job_id: NonEmptyStr
     status: Literal["queued"] = "queued"
 
 
 class JobProgressResponse(BaseModel):
     """SSE payload emitted during background ingestion."""
 
-    job_id: str
-    filename: str
+    job_id: NonEmptyStr
+    filename: NonEmptyStr
     status: Literal["queued", "processing", "done", "failed"]
     progress: int
     chunk_count: int | None
-    error: str | None
+    error: NonEmptyStr | None
 
 
 class DependencyStatus(BaseModel):
@@ -126,22 +125,29 @@ class DependencyStatus(BaseModel):
 
     status: Literal["ok", "degraded"]
     latency_ms: float | None = None
-    detail: str | None = None
+    detail: NonEmptyStr | None = None
+
+
+class BasicHealthResponse(BaseModel):
+    """Response model for GET /api/health (shallow liveness check)."""
+
+    status: Literal["ok"]
+    version: NonEmptyStr
 
 
 class HealthResponse(BaseModel):
-    """Response model for GET /api/health."""
+    """Response model for GET /api/health/deep."""
 
     status: Literal["ok", "degraded"]
-    version: str
-    dependencies: dict[str, DependencyStatus]
+    version: NonEmptyStr
+    dependencies: dict[NonEmptyStr, DependencyStatus]
 
 
 class MessageHistoryItem(BaseModel):
     """A single message entry returned from GET /messages history."""
 
     id: Annotated[
-        int | None,
+        NonZeroOrNegativeInt | None,
         Field(description="Database primary key of the message row."),
     ]
     role: Annotated[

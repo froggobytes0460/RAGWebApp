@@ -1,48 +1,52 @@
 # pyright: reportAny=none
 
-from collections.abc import AsyncGenerator
+from unittest.mock import MagicMock
 
-from httpx import ASGITransport, AsyncClient
+from httpx import AsyncClient
 import pytest
 import pytest_mock
 from qdrant_client.http.models import CollectionsResponse
 
-from backend.api import app
-from backend.api.state import AppState
-
 
 @pytest.fixture
-async def health_client() -> AsyncGenerator[AsyncClient]:
-    app.typed_state = AppState()
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
-    ) as c:
-        yield c
-    app.dependency_overrides.clear()
-
-
-async def test_health_ok(
-    health_client: AsyncClient, mocker: pytest_mock.MockerFixture
-) -> None:
+def mock_db_engine(mocker: pytest_mock.MockerFixture) -> MagicMock:
     mock_conn = mocker.AsyncMock()
     mock_conn.__aenter__ = mocker.AsyncMock(return_value=mock_conn)
     mock_conn.__aexit__ = mocker.AsyncMock(return_value=False)
     mock_conn.exec_driver_sql = mocker.AsyncMock()
+    engine = mocker.MagicMock()
+    engine.connect.return_value = mock_conn
+    return engine
 
-    mock_engine = mocker.MagicMock()
-    mock_engine.connect.return_value = mock_conn
 
-    mock_vs = mocker.MagicMock()
-    mock_vs.async_client = mocker.AsyncMock()
-    mock_vs.async_client.get_collections = mocker.AsyncMock(
+@pytest.fixture
+def mock_async_vs(mocker: pytest_mock.MockerFixture) -> MagicMock:
+    vs = mocker.MagicMock()
+    vs.async_client = mocker.AsyncMock()
+    vs.async_client.get_collections = mocker.AsyncMock(
         return_value=CollectionsResponse(collections=[])
     )
+    return vs
 
-    with (
-        mocker.patch("backend.api.app.get_engine", return_value=mock_engine),
-        mocker.patch("backend.api.app.get_vector_store", return_value=mock_vs),
-    ):
-        resp = await health_client.get(url="/api/health")
+
+async def test_health_liveness(client: AsyncClient) -> None:
+    resp = await client.get(url="/api/health")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["status"] == "ok"
+    assert "version" in body
+    assert "dependencies" not in body
+
+
+async def test_deep_health_ok(
+    client: AsyncClient,
+    mocker: pytest_mock.MockerFixture,
+    mock_db_engine: MagicMock,
+    mock_async_vs: MagicMock,
+) -> None:
+    _ = mocker.patch("backend.api.app.get_engine", return_value=mock_db_engine)
+    _ = mocker.patch("backend.api.app.get_vector_store", return_value=mock_async_vs)
+    resp = await client.get(url="/api/health/deep")
 
     assert resp.status_code == 200
     body = resp.json()
@@ -53,29 +57,22 @@ async def test_health_ok(
     assert body["dependencies"]["database"]["latency_ms"] is not None
 
 
-async def test_health_db_degraded(
-    health_client: AsyncClient, mocker: pytest_mock.MockerFixture
+async def test_deep_health_db_degraded(
+    client: AsyncClient,
+    mocker: pytest_mock.MockerFixture,
+    mock_async_vs: MagicMock,
 ) -> None:
     mock_conn = mocker.AsyncMock()
     mock_conn.__aenter__ = mocker.AsyncMock(
         side_effect=Exception("DB connection refused")
     )
     mock_conn.__aexit__ = mocker.AsyncMock(return_value=False)
-
     mock_engine = mocker.MagicMock()
     mock_engine.connect.return_value = mock_conn
 
-    mock_vs = mocker.MagicMock()
-    mock_vs.async_client = mocker.AsyncMock()
-    mock_vs.async_client.get_collections = mocker.AsyncMock(
-        return_value=CollectionsResponse(collections=[])
-    )
-
-    with (
-        mocker.patch("backend.api.app.get_engine", return_value=mock_engine),
-        mocker.patch("backend.api.app.get_vector_store", return_value=mock_vs),
-    ):
-        resp = await health_client.get(url="/api/health")
+    _ = mocker.patch("backend.api.app.get_engine", return_value=mock_engine)
+    _ = mocker.patch("backend.api.app.get_vector_store", return_value=mock_async_vs)
+    resp = await client.get(url="/api/health/deep")
 
     assert resp.status_code == 503
     body = resp.json()
@@ -85,28 +82,20 @@ async def test_health_db_degraded(
     assert body["dependencies"]["vector_store"]["status"] == "ok"
 
 
-async def test_health_vector_store_degraded(
-    health_client: AsyncClient, mocker: pytest_mock.MockerFixture
+async def test_deep_health_vector_store_degraded(
+    client: AsyncClient,
+    mocker: pytest_mock.MockerFixture,
+    mock_db_engine: MagicMock,
 ) -> None:
-    mock_conn = mocker.AsyncMock()
-    mock_conn.__aenter__ = mocker.AsyncMock(return_value=mock_conn)
-    mock_conn.__aexit__ = mocker.AsyncMock(return_value=False)
-    mock_conn.exec_driver_sql = mocker.AsyncMock()
-
-    mock_engine = mocker.MagicMock()
-    mock_engine.connect.return_value = mock_conn
-
     mock_vs = mocker.MagicMock()
     mock_vs.async_client = mocker.AsyncMock()
     mock_vs.async_client.get_collections = mocker.AsyncMock(
         side_effect=Exception("Qdrant unreachable")
     )
 
-    with (
-        mocker.patch("backend.api.app.get_engine", return_value=mock_engine),
-        mocker.patch("backend.api.app.get_vector_store", return_value=mock_vs),
-    ):
-        resp = await health_client.get("/api/health")
+    _ = mocker.patch("backend.api.app.get_engine", return_value=mock_db_engine)
+    _ = mocker.patch("backend.api.app.get_vector_store", return_value=mock_vs)
+    resp = await client.get("/api/health/deep")
 
     assert resp.status_code == 503
     body = resp.json()
@@ -115,18 +104,12 @@ async def test_health_vector_store_degraded(
     assert "Qdrant unreachable" in body["dependencies"]["vector_store"]["detail"]
 
 
-async def test_health_sync_client_fallback(
-    health_client: AsyncClient, mocker: pytest_mock.MockerFixture
+async def test_deep_health_sync_client_fallback(
+    client: AsyncClient,
+    mocker: pytest_mock.MockerFixture,
+    mock_db_engine: MagicMock,
 ) -> None:
     """Covers the local-path mode where async_client is None."""
-    mock_conn = mocker.AsyncMock()
-    mock_conn.__aenter__ = mocker.AsyncMock(return_value=mock_conn)
-    mock_conn.__aexit__ = mocker.AsyncMock(return_value=False)
-    mock_conn.exec_driver_sql = mocker.AsyncMock()
-
-    mock_engine = mocker.MagicMock()
-    mock_engine.connect.return_value = mock_conn
-
     mock_vs = mocker.MagicMock()
     mock_vs.async_client = None
     mock_vs.client = mocker.MagicMock()
@@ -134,11 +117,9 @@ async def test_health_sync_client_fallback(
         return_value=CollectionsResponse(collections=[])
     )
 
-    with (
-        mocker.patch("backend.api.app.get_engine", return_value=mock_engine),
-        mocker.patch("backend.api.app.get_vector_store", return_value=mock_vs),
-    ):
-        resp = await health_client.get(url="/api/health")
+    _ = mocker.patch("backend.api.app.get_engine", return_value=mock_db_engine)
+    _ = mocker.patch("backend.api.app.get_vector_store", return_value=mock_vs)
+    resp = await client.get(url="/api/health/deep")
 
     assert resp.status_code == 200
     assert resp.json()["dependencies"]["vector_store"]["status"] == "ok"

@@ -21,7 +21,7 @@ from slowapi.errors import RateLimitExceeded
 from starlette.types import ExceptionHandler
 
 from backend.api.documents import documents_router, get_vector_store
-from backend.api.schemas import DependencyStatus, HealthResponse
+from backend.api.schemas import BasicHealthResponse, DependencyStatus, HealthResponse
 from backend.api.state import AppState, TypedFastAPI
 from backend.api.limiter import limiter
 from backend.api.messages import messages_router
@@ -37,11 +37,18 @@ from backend.core.vector_store import (
     _get_fastembed_embeddings,  # pyright: ignore[reportPrivateUsage]
 )
 
+try:
+    _version = pkg_version(distribution_name="ragwebapp")
+except Exception:
+    _version = "unknown"
+_VERSION = _version
+
 _FRONTEND_DIST = BASE_DIR / "frontend/dist"
 
 
 @asynccontextmanager
 async def lifespan(app: TypedFastAPI) -> AsyncGenerator[None]:
+    # Startup
     app_logger.setup(log_settings=settings.log)
     app_logger.lifecycle(event="Application startup", level=settings.log.level)
 
@@ -72,11 +79,12 @@ async def lifespan(app: TypedFastAPI) -> AsyncGenerator[None]:
             vector_store=vector_store,
         )
     )
-    app_logger.lifecycle("Ingestion worker started")
+    app_logger.lifecycle(event="Ingestion worker started")
 
-    yield
+    yield  # App process
 
-    app_logger.lifecycle("Application shutdown initiated")
+    # Shutdown
+    app_logger.lifecycle(event="Application shutdown initiated")
     _ = worker_task.cancel()
     try:
         await worker_task
@@ -104,23 +112,24 @@ app.include_router(router=main_api)
 
 
 async def _check_database() -> DependencyStatus:
-    t0 = time.monotonic()
+    t0 = time.perf_counter()
     try:
         async with get_engine().connect() as conn:
             _ = await conn.exec_driver_sql(statement="SELECT 1")
         return DependencyStatus(
-            status="ok", latency_ms=round((time.monotonic() - t0) * 1000, 2)
+            status="ok",
+            latency_ms=round(number=(time.perf_counter() - t0) * 1000, ndigits=2),
         )
     except Exception as exc:
         return DependencyStatus(
             status="degraded",
-            latency_ms=round((time.monotonic() - t0) * 1000, 2),
+            latency_ms=round(number=(time.perf_counter() - t0) * 1000, ndigits=2),
             detail=str(exc),
         )
 
 
 async def _check_vector_store() -> DependencyStatus:
-    t0 = time.monotonic()
+    t0 = time.perf_counter()
     try:
         vs = get_vector_store()
         if vs.async_client is not None:
@@ -129,23 +138,24 @@ async def _check_vector_store() -> DependencyStatus:
             _ = await asyncio.to_thread(vs.client.get_collections)
         return DependencyStatus(
             status="ok",
-            latency_ms=round(number=(time.monotonic() - t0) * 1000, ndigits=2),
+            latency_ms=round(number=(time.perf_counter() - t0) * 1000, ndigits=2),
         )
     except Exception as exc:
         return DependencyStatus(
             status="degraded",
-            latency_ms=round((time.monotonic() - t0) * 1000, ndigits=2),
+            latency_ms=round(number=(time.perf_counter() - t0) * 1000, ndigits=2),
             detail=str(exc),
         )
 
 
-@app.get(path="/api/health", response_model=HealthResponse, include_in_schema=False)
+@app.get(path="/api/health", include_in_schema=False)
 async def health_check() -> Response:
-    try:
-        _version = pkg_version("ragwebapp")
-    except Exception:
-        _version = "unknown"
+    payload = BasicHealthResponse(status="ok", version=_VERSION)
+    return JSONResponse(content=payload.model_dump(), status_code=status.HTTP_200_OK)
 
+
+@app.get(path="/api/health/deep", include_in_schema=False)
+async def deep_health_check() -> Response:
     db_status, vs_status = await asyncio.gather(
         _check_database(), _check_vector_store()
     )
@@ -155,7 +165,7 @@ async def health_check() -> Response:
         status.HTTP_200_OK if overall == "ok" else status.HTTP_503_SERVICE_UNAVAILABLE
     )
 
-    payload = HealthResponse(status=overall, version=_version, dependencies=deps)
+    payload = HealthResponse(status=overall, version=_VERSION, dependencies=deps)
     return JSONResponse(content=payload.model_dump(), status_code=http_status)
 
 
@@ -201,7 +211,7 @@ def custom_openapi() -> dict[str, Any]:  # pyright: ignore[reportExplicitAny]
 
     openapi_schema = get_openapi(
         title="Backend API",
-        version="1.0.0",
+        version=_VERSION,
         description="API Documentation featuring automated file size validation schemas.",
         routes=app.routes,
     )
