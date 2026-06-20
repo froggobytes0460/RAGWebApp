@@ -69,6 +69,75 @@ describe('api.deleteDocument', () => {
   })
 })
 
+describe('api.streamJobProgress', () => {
+  function makeSSEResponse(chunks: string[], status = 200) {
+    let chunkIndex = 0
+    const encoder = new TextEncoder()
+    const stream = new ReadableStream({
+      pull(controller) {
+        if (chunkIndex < chunks.length) {
+          controller.enqueue(encoder.encode(chunks[chunkIndex++]))
+        } else {
+          controller.close()
+        }
+      },
+    })
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({ ok: status < 400, status, body: stream }),
+    )
+  }
+
+  it('calls onProgress for progress events', async () => {
+    const onProgress = vi.fn()
+    const onDone = vi.fn()
+    const onError = vi.fn()
+    makeSSEResponse([
+      'data: {"status":"processing","progress":50}\n\n',
+      'data: {"status":"done","progress":100}\n\n',
+    ])
+    await api.streamJobProgress('sess1', 'job-1', { onProgress, onDone, onError })
+    expect(onProgress).toHaveBeenCalledWith({ status: 'processing', progress: 50 })
+    expect(onDone).toHaveBeenCalledWith({ status: 'done', progress: 100 })
+    expect(onError).not.toHaveBeenCalled()
+  })
+
+  it('calls onDone for failed status', async () => {
+    const onDone = vi.fn()
+    makeSSEResponse(['data: {"status":"failed","progress":0}\n\n'])
+    await api.streamJobProgress('sess1', 'job-1', { onProgress: vi.fn(), onDone, onError: vi.fn() })
+    expect(onDone).toHaveBeenCalledWith({ status: 'failed', progress: 0 })
+  })
+
+  it('calls onError on non-ok response', async () => {
+    const onError = vi.fn()
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 500, body: null }))
+    await api.streamJobProgress('sess1', 'job-1', { onProgress: vi.fn(), onDone: vi.fn(), onError })
+    expect(onError).toHaveBeenCalledWith(expect.objectContaining({ message: 'HTTP 500' }))
+  })
+
+  it('ignores malformed SSE frames', async () => {
+    const onProgress = vi.fn()
+    const onDone = vi.fn()
+    makeSSEResponse([
+      'data: not-json\n\n',
+      'data: {"status":"done","progress":100}\n\n',
+    ])
+    await api.streamJobProgress('sess1', 'job-1', { onProgress, onDone, onError: vi.fn() })
+    expect(onProgress).not.toHaveBeenCalled()
+    expect(onDone).toHaveBeenCalledWith({ status: 'done', progress: 100 })
+  })
+
+  it('does not call onError when aborted', async () => {
+    const onError = vi.fn()
+    const abortError = new Error('aborted')
+    abortError.name = 'AbortError'
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(abortError))
+    await api.streamJobProgress('sess1', 'job-1', { onProgress: vi.fn(), onDone: vi.fn(), onError })
+    expect(onError).not.toHaveBeenCalled()
+  })
+})
+
 describe('api.uploadDocument', () => {
   interface XHRInstance {
     upload: { onprogress: ((e: { lengthComputable: boolean; loaded: number; total: number }) => void) | null }
