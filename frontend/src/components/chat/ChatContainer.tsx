@@ -25,16 +25,18 @@ export function ChatContainer({ sessionId }: ChatContainerProps) {
 
   const abortRef = useRef<AbortController | null>(null)
   const messageCountAtSendRef = useRef<number>(0)
+  const streamingDoneRef = useRef(false)
 
   useEffect(() => {
-    if (streamingDone && messages.length > messageCountAtSendRef.current) {
+    if (streamingDoneRef.current && messages.length > messageCountAtSendRef.current) {
       const lastMsg = messages[messages.length - 1]
       if (lastMsg?.role === 'ai') {
+        streamingDoneRef.current = false
         setStreamingDone(false)
         setStreamingContent('')
       }
     }
-  }, [streamingDone, messages])
+  }, [messages])
 
   const handleSend = useCallback(
     async (question: string, topK: number, scoreThreshold: number | undefined) => {
@@ -59,6 +61,7 @@ export function ChatContainer({ sessionId }: ChatContainerProps) {
           onChunk: (text) => setStreamingContent((prev) => prev + text),
           onDone: (chunks) => {
             setStreamingSources(chunks)
+            streamingDoneRef.current = true
             setStreamingDone(true)
             setIsStreaming(false)
             void qc.invalidateQueries({ queryKey: ['messages', sessionId] })
