@@ -1,8 +1,10 @@
 # pyright: reportAny=none
 
 import asyncio
+import time
 from collections.abc import AsyncGenerator, Awaitable, Callable
 from contextlib import asynccontextmanager
+from importlib.metadata import version as pkg_version
 from typing import Any, cast
 
 from apscheduler.schedulers.asyncio import (  # pyright: ignore[reportMissingTypeStubs]
@@ -19,6 +21,7 @@ from slowapi.errors import RateLimitExceeded
 from starlette.types import ExceptionHandler
 
 from backend.api.documents import documents_router, get_vector_store
+from backend.api.schemas import DependencyStatus, HealthResponse
 from backend.api.state import AppState, TypedFastAPI
 from backend.api.limiter import limiter
 from backend.api.messages import messages_router
@@ -27,7 +30,7 @@ from backend.core.chunking import (
     _get_cached_tokenizer,  # pyright: ignore[reportPrivateUsage]
 )
 from backend.core.config import BASE_DIR, settings
-from backend.core.database import close_db, init_db
+from backend.core.database import close_db, get_engine, init_db
 from backend.core.logging import app_logger
 import backend.core.models  # pyright: ignore[reportUnusedImport]
 from backend.core.vector_store import (
@@ -40,7 +43,7 @@ _FRONTEND_DIST = BASE_DIR / "frontend/dist"
 @asynccontextmanager
 async def lifespan(app: TypedFastAPI) -> AsyncGenerator[None]:
     app_logger.setup(log_settings=settings.log)
-    app_logger.lifecycle("Application startup", level=settings.log.level)
+    app_logger.lifecycle(event="Application startup", level=settings.log.level)
 
     vector_store = get_vector_store()
     _ = await vector_store.ainit_collection()
@@ -58,7 +61,7 @@ async def lifespan(app: TypedFastAPI) -> AsyncGenerator[None]:
     )
     scheduler.start()
     app_logger.lifecycle(
-        "Stale vector cleanup scheduled", every_seconds=settings.vector_store.ttl
+        event="Stale vector cleanup scheduled", every_seconds=settings.vector_store.ttl
     )
 
     app.typed_state = AppState()
@@ -100,9 +103,60 @@ app.add_exception_handler(
 app.include_router(router=main_api)
 
 
-@app.get(path="/api/health", include_in_schema=False)
-def health_check() -> dict[str, str]:
-    return {"status": "ok"}
+async def _check_database() -> DependencyStatus:
+    t0 = time.monotonic()
+    try:
+        async with get_engine().connect() as conn:
+            _ = await conn.exec_driver_sql(statement="SELECT 1")
+        return DependencyStatus(
+            status="ok", latency_ms=round((time.monotonic() - t0) * 1000, 2)
+        )
+    except Exception as exc:
+        return DependencyStatus(
+            status="degraded",
+            latency_ms=round((time.monotonic() - t0) * 1000, 2),
+            detail=str(exc),
+        )
+
+
+async def _check_vector_store() -> DependencyStatus:
+    t0 = time.monotonic()
+    try:
+        vs = get_vector_store()
+        if vs.async_client is not None:
+            _ = await vs.async_client.get_collections()
+        else:
+            _ = await asyncio.to_thread(vs.client.get_collections)
+        return DependencyStatus(
+            status="ok",
+            latency_ms=round(number=(time.monotonic() - t0) * 1000, ndigits=2),
+        )
+    except Exception as exc:
+        return DependencyStatus(
+            status="degraded",
+            latency_ms=round((time.monotonic() - t0) * 1000, ndigits=2),
+            detail=str(exc),
+        )
+
+
+@app.get(path="/api/health", response_model=HealthResponse, include_in_schema=False)
+async def health_check() -> Response:
+    try:
+        _version = pkg_version("ragwebapp")
+    except Exception:
+        _version = "unknown"
+
+    db_status, vs_status = await asyncio.gather(
+        _check_database(), _check_vector_store()
+    )
+    deps = {"database": db_status, "vector_store": vs_status}
+    overall: str = "ok" if all(d.status == "ok" for d in deps.values()) else "degraded"
+    http_status = (
+        status.HTTP_200_OK if overall == "ok" else status.HTTP_503_SERVICE_UNAVAILABLE
+    )
+
+    payload = HealthResponse(status=overall, version=_version, dependencies=deps)
+    return JSONResponse(content=payload.model_dump(), status_code=http_status)
 
 
 @app.middleware(middleware_type="http")

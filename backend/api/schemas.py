@@ -121,6 +121,22 @@ class JobProgressResponse(BaseModel):
     error: str | None
 
 
+class DependencyStatus(BaseModel):
+    """Status of a single downstream dependency."""
+
+    status: Literal["ok", "degraded"]
+    latency_ms: float | None = None
+    detail: str | None = None
+
+
+class HealthResponse(BaseModel):
+    """Response model for GET /api/health."""
+
+    status: Literal["ok", "degraded"]
+    version: str
+    dependencies: dict[str, DependencyStatus]
+
+
 class MessageHistoryItem(BaseModel):
     """A single message entry returned from GET /messages history."""
 
