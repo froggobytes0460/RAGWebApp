@@ -1,0 +1,27 @@
+name: Docker
+
+on:
+  pull_request:
+    branches: [ "main" ]
+    paths:
+      - "Dockerfile"
+      - "docker-compose.yml"
+      - ".dockerignore"
+      - "backend/**"
+      - "frontend/**"
+      - "pyproject.toml"
+      - "uv.lock"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Copy Docker environment blueprint
+        run: cp .env.example .env.docker
+
+      - name: Build Docker images
+        run: docker compose build
