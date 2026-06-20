@@ -1,7 +1,7 @@
 from datetime import datetime
-from typing import Annotated, Literal, Self, TypeAlias
+from typing import Annotated, Literal, TypeAlias
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field
 from qdrant_client.models import UpdateStatus
 
 NonEmptyStr: TypeAlias = Annotated[str, Field(min_length=1)]
@@ -9,35 +9,6 @@ NonEmptyStr: TypeAlias = Annotated[str, Field(min_length=1)]
 
 NonZeroOrNegativeInt: TypeAlias = Annotated[int, Field(gt=0)]
 """Int type, but value > 0 ."""
-
-
-class MetadataFilter(BaseModel):
-    """Structured metadata filters for scoping vector search queries."""
-
-    filenames: Annotated[
-        list[NonEmptyStr] | None,
-        Field(
-            description="Filter results to matches within specific source files.",
-        ),
-    ] = None
-    page_min: Annotated[
-        NonZeroOrNegativeInt | None,
-        Field(
-            description="Inclusive lower bound for the source page number.",
-        ),
-    ] = None
-    page_max: Annotated[
-        NonZeroOrNegativeInt | None,
-        Field(
-            description="Inclusive upper bound for the source page number.",
-        ),
-    ] = None
-
-    @model_validator(mode="after")
-    def validate_page_range(self) -> Self:
-        if self.page_min and self.page_max and self.page_min > self.page_max:
-            raise ValueError("page_min cannot be greater than page_max")
-        return self
 
 
 class IngestResponse(BaseModel):
@@ -81,13 +52,6 @@ class MessageRequest(BaseModel):
             ge=0.0,
             le=1.0,
             description="Minimum similarity score cutoff to filter out bad matches.",
-        ),
-    ] = None
-
-    filters: Annotated[
-        MetadataFilter | None,
-        Field(
-            description="Structured metadata filters passed directly to the Vector DB.",
         ),
     ] = None
 
@@ -137,6 +101,24 @@ class StreamChunk(BaseModel):
     retrieved_chunks: list[RetrievedChunk] = Field(
         default_factory=list, description="Populated only in the final 'done' event."
     )
+
+
+class IngestJobResponse(BaseModel):
+    """Returned immediately (HTTP 202) when a document upload is accepted."""
+
+    job_id: str
+    status: Literal["queued"] = "queued"
+
+
+class JobProgressResponse(BaseModel):
+    """SSE payload emitted during background ingestion."""
+
+    job_id: str
+    filename: str
+    status: Literal["queued", "processing", "done", "failed"]
+    progress: int
+    chunk_count: int | None
+    error: str | None
 
 
 class MessageHistoryItem(BaseModel):

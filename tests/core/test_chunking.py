@@ -1,79 +1,82 @@
 # pyright: reportPrivateUsage=none
 
-from collections.abc import Callable
 import threading
-import time
-from typing import cast
 from unittest.mock import MagicMock
 
 from langchain_core.documents import Document
-from langchain_text_splitters import TextSplitter
 from pytest_mock import MockerFixture
-from transformers import PreTrainedTokenizerBase
+from tokenizers import Tokenizer
 
-from backend.core.chunking import TextChunker, _get_cached_tokenizer
+from backend.core.chunking import TextChunker, _get_cached_tokenizer, _get_splitter
 
 
 class TestTokenizerCache:
     def test_is_cached(self, mocker: MockerFixture) -> None:
         mock_from_pretrained: MagicMock = mocker.patch(
-            "backend.core.chunking.AutoTokenizer.from_pretrained"
+            "backend.core.chunking.Tokenizer.from_pretrained"
         )
 
-        t1: PreTrainedTokenizerBase = _get_cached_tokenizer()
+        t1: Tokenizer = _get_cached_tokenizer()
         assert mock_from_pretrained.call_count == 1
 
-        t2: PreTrainedTokenizerBase = _get_cached_tokenizer()
+        t2: Tokenizer = _get_cached_tokenizer()
         assert mock_from_pretrained.call_count == 1
         assert t1 is t2
 
+    def test_splitter_is_cached(self, mocker: MockerFixture) -> None:
+        mock_factory: MagicMock = mocker.patch(
+            "backend.core.chunking.TextSplitter.from_huggingface_tokenizer"
+        )
+        mock_factory.return_value = MagicMock()
+
+        s1 = _get_splitter()
+        s2 = _get_splitter()
+        assert mock_factory.call_count == 1
+        assert s1 is s2
+
 
 class TestTextChunker:
-    async def test_achunk_text_uses_splitter(self, mocker: MockerFixture) -> None:
-        dummy_documents = [Document(page_content="doc1"), Document(page_content="doc2")]
-        expected_chunks = [
-            Document(page_content="chunk1"),
-            Document(page_content="chunk2"),
-        ]
-
-        mock_splitter: MagicMock = mocker.MagicMock()
-        mock_split_docs: MagicMock = cast(MagicMock, mock_splitter.split_documents)
-        mock_split_docs.return_value = expected_chunks
-
+    async def test_achunk_text_returns_documents(self, mocker: MockerFixture) -> None:
+        expected = [Document(page_content="chunk1"), Document(page_content="chunk2")]
         _ = mocker.patch.object(
-            target=TextChunker,
-            attribute="_recursive_text_splitter",
-            new=mock_splitter,
+            target=TextChunker, attribute="_split_documents", return_value=expected
         )
 
-        chunker = TextChunker()
-        result: list[Document] = await chunker.achunk_text(dummy_documents)
+        result = await TextChunker().achunk_text([Document(page_content="input")])
+        assert result == expected
 
-        assert result == expected_chunks
-        mock_split_docs.assert_called_once_with(dummy_documents)
+    def test_split_documents_concurrent_calls_are_safe(self) -> None:
+        docs = [Document(page_content="hello world " * 10)]
+        results: list[list[Document]] = []
+        lock = threading.Lock()
 
-    def test_splitter_initialization_is_threadsafe(self, mocker: MockerFixture) -> None:
-        dummy_splitter_instance: MagicMock = mocker.MagicMock(spec=TextSplitter)
-        ctor_side_effect: Callable[..., TextSplitter] = lambda *args, **kwargs: (
-            time.sleep(0.05),
-            dummy_splitter_instance,
-        )[1]
+        def run() -> None:
+            r = TextChunker._split_documents(docs)
+            with lock:
+                results.append(r)
 
-        mock_splitter_ctor: MagicMock = mocker.patch(
-            "backend.core.chunking.RecursiveCharacterTextSplitter.from_huggingface_tokenizer",
-            side_effect=ctor_side_effect,
-        )
-
-        _ = mocker.patch("backend.core.chunking._get_cached_tokenizer")
-
-        threads: list[threading.Thread] = [
-            threading.Thread(target=TextChunker._get_splitter_recursive)
-            for _ in range(5)
-        ]
+        threads = [threading.Thread(target=run) for _ in range(5)]
         for t in threads:
             t.start()
         for t in threads:
             t.join()
 
-        assert mock_splitter_ctor.call_count == 1
-        assert TextChunker._recursive_text_splitter is dummy_splitter_instance
+        assert len(results) == 5
+        assert all(isinstance(r, list) for r in results)
+
+    async def test_achunk_text_filters_empty_chunks(
+        self, mocker: MockerFixture
+    ) -> None:
+        mock_splitter = MagicMock()
+        _ = mock_splitter.chunks.return_value = [  # pyright: ignore[reportAny]
+            "  ",
+            "real content",
+        ]
+        _ = mocker.patch(
+            "backend.core.chunking._get_splitter", return_value=mock_splitter
+        )
+
+        result = await TextChunker().achunk_text([Document(page_content="anything")])
+        contents = [d.page_content for d in result]
+        assert "  " not in contents
+        assert "real content" in contents

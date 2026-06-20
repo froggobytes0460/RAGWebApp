@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback, useEffect } from 'react'
+import { useState, useRef, useCallback } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { MessageList } from './MessageList'
 import { ChatInput } from './ChatInput'
@@ -26,16 +26,6 @@ export function ChatContainer({ sessionId }: ChatContainerProps) {
   const abortRef = useRef<AbortController | null>(null)
   const messageCountAtSendRef = useRef<number>(0)
 
-  useEffect(() => {
-    if (streamingDone && messages.length > messageCountAtSendRef.current) {
-      const lastMsg = messages[messages.length - 1]
-      if (lastMsg?.role === 'ai') {
-        setStreamingDone(false)
-        setStreamingContent('')
-      }
-    }
-  }, [streamingDone, messages])
-
   const handleSend = useCallback(
     async (question: string, topK: number, scoreThreshold: number | undefined) => {
       abortRef.current = new AbortController()
@@ -61,7 +51,10 @@ export function ChatContainer({ sessionId }: ChatContainerProps) {
             setStreamingSources(chunks)
             setStreamingDone(true)
             setIsStreaming(false)
-            void qc.invalidateQueries({ queryKey: ['messages', sessionId] })
+            void qc.invalidateQueries({ queryKey: ['messages', sessionId] }).then(() => {
+              setStreamingDone(false)
+              setStreamingContent('')
+            })
           },
           onError: (detail) => {
             setError(detail)

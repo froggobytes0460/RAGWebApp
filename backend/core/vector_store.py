@@ -5,10 +5,11 @@ import asyncio
 from datetime import datetime, timedelta, timezone
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, ClassVar, Literal, Self, cast
+from typing import Any, ClassVar, Literal, Self, cast, override
 
 from langchain_core.documents import Document
-from langchain_huggingface import HuggingFaceEmbeddings
+from fastembed import TextEmbedding
+from langchain_core.embeddings import Embeddings
 from langchain_qdrant import QdrantVectorStore
 from pydantic import BaseModel, ConfigDict, PrivateAttr
 from qdrant_client import AsyncQdrantClient, QdrantClient
@@ -17,16 +18,30 @@ from qdrant_client.conversions import common_types
 
 from backend.core.config import settings
 from backend.core.ingest import StrictMetadata
+from backend.core.logging import app_logger
+
+
+class _FastEmbedWrapper(Embeddings):
+    _model: TextEmbedding
+
+    def __init__(self, model_name: str) -> None:
+        self._model = TextEmbedding(model_name=model_name)
+
+    @override
+    def embed_documents(self, texts: list[str]) -> list[list[float]]:
+        return [v.tolist() for v in self._model.embed(documents=texts)]
+
+    @override
+    def embed_query(self, text: str) -> list[float]:
+        return next(iter(self._model.embed(documents=[text]))).tolist()
 
 
 @lru_cache(maxsize=1)
-def _get_huggingface_embeddings() -> HuggingFaceEmbeddings:
-    return HuggingFaceEmbeddings(
-        model_name=settings.vector_store.embedding_model,
-        encode_kwargs={
-            "normalize_embeddings": settings.vector_store.normalize_embeddings
-        },
+def _get_fastembed_embeddings() -> _FastEmbedWrapper:
+    app_logger.info(
+        "Loading FastEmbed model: %s", settings.vector_store.embedding_model
     )
+    return _FastEmbedWrapper(model_name=settings.vector_store.embedding_model)
 
 
 class VectorStore(BaseModel):
@@ -68,7 +83,7 @@ class VectorStore(BaseModel):
             self._vector_store = QdrantVectorStore(
                 client=self.client,
                 collection_name=self.collection_name,
-                embedding=_get_huggingface_embeddings(),
+                embedding=_get_fastembed_embeddings(),
             )
         return self._vector_store
 
@@ -83,6 +98,7 @@ class VectorStore(BaseModel):
     async def ainit_collection(
         self,
     ) -> dict[Literal["session_id", "uploaded_at"], models.UpdateResult]:
+        app_logger.info("Initializing Qdrant collection: %s", self.collection_name)
         exists: bool = await self._run_async(
             method_name="collection_exists", collection_name=self.collection_name
         )
@@ -97,6 +113,7 @@ class VectorStore(BaseModel):
             )
             if not created:
                 raise RuntimeError("Unable to initialize Qdrant collection.")
+            app_logger.info("Created new Qdrant collection: %s", self.collection_name)
 
         session_id_res, uploaded_at_res = await asyncio.gather(
             self._run_async(
@@ -125,6 +142,7 @@ class VectorStore(BaseModel):
     async def ainsert_docs(
         self, documents: list[Document], session_id: str
     ) -> list[str]:
+        app_logger.debug("Inserting %d docs (session: %s)", len(documents), session_id)
         curr_time = datetime.now(tz=timezone.utc).isoformat()
         for doc in documents:
             doc_metadata: StrictMetadata = cast(StrictMetadata, doc.metadata)
@@ -207,6 +225,7 @@ class VectorStore(BaseModel):
     async def adelete_document(
         self, session_id: str, filename: str
     ) -> models.UpdateResult:
+        app_logger.info("Deleting vectors for '%s' in session %s", filename, session_id)
         return await self._run_async(
             method_name="delete",
             collection_name=self.collection_name,
@@ -227,6 +246,7 @@ class VectorStore(BaseModel):
         cutoff = datetime.now(tz=timezone.utc) - timedelta(
             seconds=settings.vector_store.ttl
         )
+        app_logger.info("Stale vector cleanup — TTL cutoff: %s", cutoff.isoformat())
         return await self._run_async(
             method_name="delete",
             collection_name=self.collection_name,

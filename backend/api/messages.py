@@ -70,7 +70,7 @@ class MessageView:
         chunks = [
             RetrievedChunk(
                 content=doc.page_content,
-                score=round(score, 4),
+                score=round(number=score, ndigits=4),
                 filename=str(
                     cast(StrictMetadata, doc.metadata).get("filename", "unknown")
                 ),
@@ -125,7 +125,9 @@ class MessageView:
                     chat_history=chat_history,
                 ):
                     answer_parts.append(text)
-                    payload = StreamChunk(text=text).model_dump_json(exclude_none=True)
+                    payload = StreamChunk(text=text).model_dump_json(
+                        exclude_defaults=True
+                    )
                     yield f"event: chunk\ndata: {payload}\n\n"
 
                 answer = "".join(answer_parts)
@@ -140,7 +142,9 @@ class MessageView:
                     background_db.add(instance=assistant_msg)
                     await background_db.commit()
 
-                done_payload = StreamChunk(retrieved_chunks=chunks).model_dump_json()
+                done_payload = StreamChunk(retrieved_chunks=chunks).model_dump_json(
+                    exclude_defaults=True
+                )
                 yield f"event: done\ndata: {done_payload}\n\n"
 
             except Exception as exc:

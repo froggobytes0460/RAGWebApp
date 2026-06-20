@@ -35,3 +35,17 @@ export interface DocumentListItem {
   filename: string
   [key: string]: string
 }
+
+export interface IngestJobResponse {
+  job_id: string
+  status: 'queued'
+}
+
+export interface JobProgressEvent {
+  job_id: string
+  filename: string
+  status: 'queued' | 'processing' | 'done' | 'failed'
+  progress: number
+  chunk_count: number | null
+  error: string | null
+}

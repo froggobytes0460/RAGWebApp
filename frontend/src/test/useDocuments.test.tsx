@@ -9,6 +9,7 @@ vi.mock('../lib/api', () => ({
   api: {
     listDocuments: vi.fn(),
     uploadDocument: vi.fn(),
+    streamJobProgress: vi.fn().mockResolvedValue(undefined),
     deleteDocument: vi.fn(),
   },
 }))
@@ -48,9 +49,13 @@ describe('useDocuments', () => {
     expect((result.current.query.error as Error).message).toBe('Network error')
   })
 
-  it('uploadMutation calls api.uploadDocument and invalidates query', async () => {
+  it('uploadMutation calls api.uploadDocument and invalidates query after done', async () => {
     vi.mocked(api.listDocuments).mockResolvedValue([])
-    vi.mocked(api.uploadDocument).mockResolvedValue({ document_id: 'x', doc_count: 1 })
+    vi.mocked(api.uploadDocument).mockResolvedValue({ job_id: 'job-1', status: 'queued' })
+    vi.mocked(api.streamJobProgress).mockImplementation((_sid, _jid, handlers) => {
+      handlers.onDone({ job_id: 'job-1', filename: 'test.pdf', status: 'done', progress: 100, chunk_count: 3, error: null })
+      return Promise.resolve()
+    })
 
     const { wrapper, qc } = makeWrapper()
     const invalidateSpy = vi.spyOn(qc, 'invalidateQueries')
@@ -64,12 +69,17 @@ describe('useDocuments', () => {
     })
 
     expect(api.uploadDocument).toHaveBeenCalledWith('sess1', file, expect.any(Function))
+
+    // wait for the 2-second timeout inside onDone to fire
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 2100))
+    })
     expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['documents', 'sess1'] })
-  })
+  }, 10_000)
 
   it('uploadProgress resets to null after successful upload', async () => {
     vi.mocked(api.listDocuments).mockResolvedValue([])
-    vi.mocked(api.uploadDocument).mockResolvedValue({ document_id: 'x', doc_count: 1 })
+    vi.mocked(api.uploadDocument).mockResolvedValue({ job_id: 'job-1', status: 'queued' })
 
     const { wrapper } = makeWrapper()
     const { result } = renderHook(() => useDocuments('sess1'), { wrapper })

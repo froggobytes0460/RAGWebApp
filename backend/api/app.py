@@ -5,8 +5,10 @@ from collections.abc import AsyncGenerator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from typing import Any, cast
 
+from apscheduler.schedulers.asyncio import (  # pyright: ignore[reportMissingTypeStubs]
+    AsyncIOScheduler,
+)
 from fastapi import status
-from fastapi.applications import FastAPI
 from fastapi.exceptions import HTTPException
 from fastapi.openapi.utils import get_openapi
 from fastapi.requests import Request
@@ -17,33 +19,70 @@ from slowapi.errors import RateLimitExceeded
 from starlette.types import ExceptionHandler
 
 from backend.api.documents import documents_router, get_vector_store
+from backend.api.state import AppState, TypedFastAPI
 from backend.api.limiter import limiter
 from backend.api.messages import messages_router
+from backend.core.ingestion_worker import run_ingestion_worker
 from backend.core.chunking import (
     _get_cached_tokenizer,  # pyright: ignore[reportPrivateUsage]
 )
 from backend.core.config import BASE_DIR, settings
 from backend.core.database import close_db, init_db
+from backend.core.logging import app_logger
 import backend.core.models  # pyright: ignore[reportUnusedImport]
 from backend.core.vector_store import (
-    _get_huggingface_embeddings,  # pyright: ignore[reportPrivateUsage]
+    _get_fastembed_embeddings,  # pyright: ignore[reportPrivateUsage]
 )
 
 _FRONTEND_DIST = BASE_DIR / "frontend/dist"
 
 
 @asynccontextmanager
-async def lifespan(
-    app: FastAPI,  # pyright: ignore[reportUnusedParameter]
-) -> AsyncGenerator[None]:
+async def lifespan(app: TypedFastAPI) -> AsyncGenerator[None]:
+    app_logger.setup(log_settings=settings.log)
+    app_logger.lifecycle("Application startup", level=settings.log.level)
+
     vector_store = get_vector_store()
     _ = await vector_store.ainit_collection()
-    _ = await asyncio.to_thread(_get_huggingface_embeddings)
+    _ = await asyncio.to_thread(_get_fastembed_embeddings)
     _ = await asyncio.to_thread(_get_cached_tokenizer)
     await init_db()
+
+    scheduler = AsyncIOScheduler()
+    _ = scheduler.add_job(  # pyright: ignore[reportUnknownMemberType]
+        func=vector_store.aclean_up_stale_vectors,
+        trigger="interval",
+        seconds=settings.vector_store.ttl,
+        id="stale_vector_cleanup",
+        replace_existing=True,
+    )
+    scheduler.start()
+    app_logger.lifecycle(
+        "Stale vector cleanup scheduled", every_seconds=settings.vector_store.ttl
+    )
+
+    app.typed_state = AppState()
+    worker_task = asyncio.create_task(
+        coro=run_ingestion_worker(
+            queue=app.typed_state.job_queue,
+            file_store=app.typed_state.file_store,
+            vector_store=vector_store,
+        )
+    )
+    app_logger.lifecycle("Ingestion worker started")
+
     yield
+
+    app_logger.lifecycle("Application shutdown initiated")
+    _ = worker_task.cancel()
+    try:
+        await worker_task
+    except asyncio.CancelledError:
+        pass
+    scheduler.shutdown(wait=False)
     await vector_store.aclose()
     await close_db()
+    app_logger.shutdown()
 
 
 # Routers
@@ -52,13 +91,18 @@ main_api.include_router(router=documents_router)
 main_api.include_router(router=messages_router)
 
 # App initialization
-app = FastAPI(lifespan=lifespan)
-app.state.limiter = limiter
+app = TypedFastAPI(lifespan=lifespan)
+app.state.limiter = limiter  # slowapi reads this from state by convention
 app.add_exception_handler(
     exc_class_or_status_code=RateLimitExceeded,
     handler=cast(ExceptionHandler, _rate_limit_exceeded_handler),
 )
 app.include_router(router=main_api)
+
+
+@app.get(path="/api/health", include_in_schema=False)
+def health_check() -> dict[str, str]:
+    return {"status": "ok"}
 
 
 @app.middleware(middleware_type="http")

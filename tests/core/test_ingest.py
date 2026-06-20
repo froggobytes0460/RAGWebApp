@@ -1,8 +1,13 @@
-from pathlib import Path
-from typing import Self
-from unittest.mock import MagicMock
+# pyright: reportPrivateUsage=none
 
+from io import BytesIO
+from pathlib import Path
+from unittest.mock import AsyncMock
+
+import docx as python_docx
 from langchain_core.documents import Document
+import openpyxl
+from pypdf import PdfWriter
 import pytest
 from pytest_mock.plugin import MockerFixture
 
@@ -10,20 +15,58 @@ from backend.core.config import IngestSettings
 from backend.core.ingest import DocumentIngestor, StrictMetadata
 
 
-class AsyncDocIterator:
-    def __init__(self, docs: list[Document]):
-        self._docs: list[Document] = docs
-        self._index: int = 0
+def _make_pdf(tmp_path: Path) -> Path:
+    writer = PdfWriter()
+    page = writer.add_blank_page(width=200, height=200)
+    page.merge_page(page)
+    buf = BytesIO()
+    _ = writer.write(stream=buf)
+    path = tmp_path / "test.pdf"
+    _ = path.write_bytes(data=buf.getvalue())
+    return path
 
-    def __aiter__(self) -> Self:
-        return self
 
-    async def __anext__(self) -> Document:
-        if self._index >= len(self._docs):
-            raise StopAsyncIteration
-        doc: Document = self._docs[self._index]
-        self._index += 1
-        return doc
+def _make_docx(
+    tmp_path: Path,
+    paragraphs: list[str] | None = None,
+    table_rows: list[list[str]] | None = None,
+    header_text: str = "",
+) -> Path:
+    doc = python_docx.Document()
+    for text in paragraphs or ["Hello DOCX"]:
+        _ = doc.add_paragraph(text)
+    if table_rows:
+        table = doc.add_table(rows=len(table_rows), cols=len(table_rows[0]))
+        for r, row in enumerate(table_rows):
+            for c, val in enumerate(row):
+                table.cell(r, c).text = val
+    if header_text:
+        doc.sections[0].header.paragraphs[0].text = header_text
+    path = tmp_path / "test.docx"
+    doc.save(path_or_stream=str(path))
+    return path
+
+
+def _make_xlsx(
+    tmp_path: Path, sheets: dict[str, list[list[str]]] | None = None
+) -> Path:
+    wb = openpyxl.Workbook()
+    default_sheet = wb.active
+    assert default_sheet is not None
+    default_data = sheets or {"Sheet": [["A", "B"], ["1", "2"]]}
+    first = True
+    for name, rows in default_data.items():
+        if first:
+            default_sheet.title = name
+            ws = default_sheet
+            first = False
+        else:
+            ws = wb.create_sheet(title=name)  # pyright: ignore[reportAny]
+        for row in rows:
+            _ = ws.append(iterable=row)
+    path = tmp_path / "test.xlsx"
+    wb.save(filename=str(path))
+    return path
 
 
 class TestDocumentIngestor:
@@ -38,7 +81,6 @@ class TestDocumentIngestor:
 
     async def test_ingest_async_success(
         self,
-        fast_ingest_config: IngestSettings,
         tmp_path: Path,
         mocker: MockerFixture,
     ) -> None:
@@ -48,28 +90,134 @@ class TestDocumentIngestor:
         ]
 
         pdf_file = tmp_path / "test.pdf"
-        _ = pdf_file.write_bytes(b"%PDF-1.4\n%test")
+        _ = pdf_file.write_bytes(data=b"%PDF-1.4\n%test")
 
-        mock_get: MagicMock = mocker.patch.object(
-            target=DocumentIngestor, attribute="_get_optimized_loader"
+        mock_load: AsyncMock = mocker.patch.object(
+            target=DocumentIngestor,
+            attribute="_load_pdf",
+            return_value=mock_docs,
         )
-        mock_loader = mocker.MagicMock()
-        mock_alazy_load: MagicMock = (  # pyright: ignore[reportAny]
-            mock_loader.alazy_load
-        )
-        mock_alazy_load.return_value = AsyncDocIterator(docs=mock_docs)
 
-        mock_get.return_value = mock_loader
-
-        ingest: DocumentIngestor = DocumentIngestor(
-            file_path=pdf_file, config=fast_ingest_config
-        )
+        ingest: DocumentIngestor = DocumentIngestor(file_path=pdf_file)
 
         result: list[Document] = await ingest.ingest_async()
 
         assert result == mock_docs
         assert len(result) == 2
-        mock_get.assert_called_once()
+        mock_load.assert_called_once()
+
+    async def test_ingest_lazy_enriches_metadata(
+        self, tmp_path: Path, mocker: MockerFixture
+    ) -> None:
+        mock_docs = [Document(page_content="text", metadata={"page": 2})]
+        path = tmp_path / "test.pdf"
+        _ = path.write_bytes(data=b"%PDF-1.4\n%test")
+
+        _ = mocker.patch.object(
+            target=DocumentIngestor, attribute="_load_pdf", return_value=mock_docs
+        )
+        ingestor = DocumentIngestor(file_path=path)
+
+        result = await ingestor.ingest_async()
+
+        assert result[0].metadata["filename"] == "test.pdf"
+        assert result[0].metadata["page_number"] == 2
+
+
+class TestLoadPdf:
+    async def test_returns_one_doc_per_page(self, tmp_path: Path) -> None:
+        path = _make_pdf(tmp_path)
+        ingestor = DocumentIngestor(file_path=path)
+        docs = await ingestor._load_pdf(source=str(path))
+        assert len(docs) == 1
+        assert docs[0].metadata["file_type"] == "pdf"
+        assert docs[0].metadata["total_pages"] == 1
+        assert docs[0].metadata["page"] == 1
+
+    async def test_extract_images_flag(self, tmp_path: Path) -> None:
+        path = _make_pdf(tmp_path)
+        config = IngestSettings(pdf_extract_images=True)
+        ingestor = DocumentIngestor(file_path=path, config=config)
+        docs = await ingestor._load_pdf(source=str(path))
+        assert len(docs) >= 1
+
+
+class TestLoadDocx:
+    async def test_basic_paragraphs(self, tmp_path: Path) -> None:
+        path = _make_docx(tmp_path, paragraphs=["Hello", "World"])
+        ingestor = DocumentIngestor(file_path=path)
+        docs = await ingestor._load_docx(source=str(path))
+        assert len(docs) == 1
+        assert "Hello" in docs[0].page_content
+        assert "World" in docs[0].page_content
+        assert docs[0].metadata["file_type"] == "docx"
+        assert docs[0].metadata["page"] == 1
+
+    async def test_includes_tables_when_enabled(self, tmp_path: Path) -> None:
+        path = _make_docx(tmp_path, table_rows=[["Col1", "Col2"], ["Val1", "Val2"]])
+        config = IngestSettings(docx_include_tables=True)
+        ingestor = DocumentIngestor(file_path=path, config=config)
+        docs = await ingestor._load_docx(source=str(path))
+        assert "Col1" in docs[0].page_content
+
+    async def test_excludes_tables_when_disabled(self, tmp_path: Path) -> None:
+        path = _make_docx(tmp_path, table_rows=[["Secret", "Data"]])
+        config = IngestSettings(docx_include_tables=False)
+        ingestor = DocumentIngestor(file_path=path, config=config)
+        docs = await ingestor._load_docx(source=str(path))
+        assert "Secret" not in docs[0].page_content
+
+    async def test_includes_headers_footers_when_enabled(self, tmp_path: Path) -> None:
+        path = _make_docx(tmp_path, header_text="MY HEADER")
+        config = IngestSettings(docx_include_headers_footers=True)
+        ingestor = DocumentIngestor(file_path=path, config=config)
+        docs = await ingestor._load_docx(source=str(path))
+        assert "MY HEADER" in docs[0].page_content
+
+    async def test_excludes_headers_footers_when_disabled(self, tmp_path: Path) -> None:
+        path = _make_docx(tmp_path, header_text="MY HEADER")
+        config = IngestSettings(docx_include_headers_footers=False)
+        ingestor = DocumentIngestor(file_path=path, config=config)
+        docs = await ingestor._load_docx(source=str(path))
+        assert "MY HEADER" not in docs[0].page_content
+
+
+class TestLoadMd:
+    async def test_returns_single_doc(self, tmp_path: Path) -> None:
+        path = tmp_path / "test.md"
+        _ = path.write_text(data="# Hello\nWorld")
+        ingestor = DocumentIngestor(file_path=path)
+        docs = await ingestor._load_md(source=str(path))
+        assert len(docs) == 1
+        assert "# Hello" in docs[0].page_content
+        assert docs[0].metadata["file_type"] == "markdown"
+        assert docs[0].metadata["page"] == 1
+
+
+class TestLoadXlsx:
+    async def test_returns_one_doc_per_sheet(self, tmp_path: Path) -> None:
+        path = _make_xlsx(tmp_path, sheets={"A": [["1"]], "B": [["2"]]})
+        ingestor = DocumentIngestor(file_path=path)
+        docs = await ingestor._load_xlsx(source=str(path))
+        assert len(docs) == 2
+        assert docs[0].metadata["sheet"] == "A"
+        assert docs[1].metadata["sheet"] == "B"
+        assert docs[0].metadata["total_sheets"] == 2
+        assert docs[0].metadata["file_type"] == "xlsx"
+
+    async def test_excludes_empty_rows_by_default(self, tmp_path: Path) -> None:
+        path = _make_xlsx(tmp_path, sheets={"Sheet": [["data"], [], ["more"]]})
+        ingestor = DocumentIngestor(file_path=path)
+        docs = await ingestor._load_xlsx(source=str(path))
+        lines = [l for l in docs[0].page_content.splitlines() if l.strip()]
+        assert len(lines) == 2
+
+    async def test_includes_empty_rows_when_enabled(self, tmp_path: Path) -> None:
+        path = _make_xlsx(tmp_path, sheets={"Sheet": [["data"], [], ["more"]]})
+        config = IngestSettings(xlsx_include_empty_rows=True)
+        ingestor = DocumentIngestor(file_path=path, config=config)
+        docs = await ingestor._load_xlsx(source=str(path))
+        assert len(docs[0].page_content.splitlines()) == 3
 
 
 class TestPageNumberExtraction:
@@ -85,7 +233,7 @@ class TestPageNumberExtraction:
         self, metadata_dict: StrictMetadata, fallback_idx: int, expected_page: int
     ) -> None:
         assert (
-            DocumentIngestor._extract_page_number(  # pyright: ignore[reportPrivateUsage]
+            DocumentIngestor._extract_page_number(
                 metadata=metadata_dict, fallback_index=fallback_idx
             )
             == expected_page

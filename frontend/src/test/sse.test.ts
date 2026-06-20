@@ -60,7 +60,7 @@ describe('streamMessage – happy path', () => {
     await streamMessage(SESSION_ID, BODY, makeHandlers(), new AbortController().signal)
 
     expect(fetchMock).toHaveBeenCalledWith(
-      `/api/v1/chats/${SESSION_ID}/messages`,
+      `/api/v1/chats/${SESSION_ID}/messages/`,
       expect.objectContaining({
         method: 'POST',
         headers: expect.objectContaining({ 'Content-Type': 'application/json', Accept: 'text/event-stream' }),

@@ -4,10 +4,10 @@ from collections.abc import AsyncGenerator
 from io import BytesIO
 
 from httpx import ASGITransport, AsyncClient
-from langchain_core.documents import Document
 import pytest
 import pytest_mock
 from qdrant_client.models import UpdateResult
+from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from backend.api.app import app
@@ -16,26 +16,21 @@ from backend.core.database import get_session
 
 
 class TestCreateDocument:
-    async def test_returns_201_on_valid_upload(
+    async def test_returns_202_on_valid_upload(
         self,
         client: AsyncClient,
         mock_pdf_bytes: bytes,
+        db_engine: AsyncEngine,
         mocker: pytest_mock.MockerFixture,
     ) -> None:
-        parsed_doc = Document(
-            page_content="hello world",
-            metadata={"filename": "test.pdf", "page_number": 1},
-        )
         _ = mocker.patch(
-            "backend.api.documents.DocumentIngestor.ingest_async",
-            new=mocker.AsyncMock(return_value=[parsed_doc]),
+            "backend.api.documents.get_session_factory",
+            return_value=async_sessionmaker(
+                bind=db_engine,
+                class_=AsyncSession,
+                expire_on_commit=False,
+            ),
         )
-        _ = mocker.patch(
-            "backend.api.documents.TextChunker.achunk_text",
-            new=mocker.AsyncMock(return_value=[parsed_doc]),
-        )
-        mock_vs = app.dependency_overrides[get_vector_store]()
-        mock_vs.ainsert_docs = mocker.AsyncMock(return_value=None)
 
         resp = await client.post(
             url="/api/v1/chats/sess-abc/documents/",
@@ -48,10 +43,10 @@ class TestCreateDocument:
             },
         )
 
-        assert resp.status_code == 201
+        assert resp.status_code == 202
         body = resp.json()
-        assert body["document_id"] == "report.pdf"
-        assert body["doc_count"] == 1
+        assert "job_id" in body
+        assert body["status"] == "queued"
 
     async def test_400_on_unsupported_extension(
         self,
@@ -65,38 +60,12 @@ class TestCreateDocument:
         assert resp.status_code == 400
         assert "Unsupported file format" in resp.json()["detail"]
 
-    async def test_422_when_ingestor_returns_empty(
-        self,
-        client: AsyncClient,
-        mock_pdf_bytes: bytes,
-        mocker: pytest_mock.MockerFixture,
-    ) -> None:
-        _ = mocker.patch(
-            "backend.api.documents.DocumentIngestor.ingest_async",
-            new=mocker.AsyncMock(return_value=[]),
-        )
-
-        resp = await client.post(
-            url="/api/v1/chats/sess-abc/documents/",
-            files={
-                "file": (
-                    "empty.pdf",
-                    BytesIO(initial_bytes=mock_pdf_bytes),
-                    "application/pdf",
-                )
-            },
-        )
-
-        assert resp.status_code == 422
-        assert "did not contain any valid text" in resp.json()["detail"]
-
     async def test_413_when_file_exceeds_size_limit(
         self,
         client: AsyncClient,
         mock_pdf_bytes: bytes,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        # Drive max_file_size to 0 so any byte written triggers the 413 path.
         from backend.core.config import settings
 
         monkeypatch.setattr(settings.ingest, "max_file_size", 0)
@@ -113,35 +82,6 @@ class TestCreateDocument:
         )
 
         assert resp.status_code == 413
-
-    async def test_doc_count_reflects_chunk_count(
-        self,
-        client: AsyncClient,
-        mocker: pytest_mock.MockerFixture,
-    ) -> None:
-        doc = Document(
-            page_content="chunk", metadata={"filename": "multi.md", "page_number": 1}
-        )
-        _ = mocker.patch(
-            "backend.api.documents.DocumentIngestor.ingest_async",
-            new=mocker.AsyncMock(return_value=[doc]),
-        )
-        _ = mocker.patch(
-            "backend.api.documents.TextChunker.achunk_text",
-            new=mocker.AsyncMock(return_value=[doc, doc, doc]),
-        )
-        mock_vs = app.dependency_overrides[get_vector_store]()
-        mock_vs.ainsert_docs = mocker.AsyncMock(return_value=None)
-
-        resp = await client.post(
-            url="/api/v1/chats/sess-abc/documents/",
-            files={
-                "file": ("multi.md", BytesIO(b"# Heading\ncontent"), "text/markdown")
-            },
-        )
-
-        assert resp.status_code == 201
-        assert resp.json()["doc_count"] == 3
 
 
 class TestListDocuments:

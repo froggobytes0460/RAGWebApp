@@ -2,7 +2,6 @@
 
 from collections.abc import AsyncGenerator, Callable
 from pathlib import Path
-import threading
 from typing import override
 from unittest.mock import AsyncMock, MagicMock
 
@@ -17,9 +16,8 @@ from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async
 from sqlmodel import SQLModel
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from backend.core import chunking
-from backend.core.chunking import TextChunker, _get_cached_tokenizer
-from backend.core.config import IngestSettings, settings
+from backend.core.chunking import _get_cached_tokenizer, _get_splitter
+from backend.core.config import settings
 from backend.core.vector_store import VectorStore
 
 
@@ -35,26 +33,14 @@ class MockEmbeddings(Embeddings):
         return [0.1] * settings.vector_store.vector_size
 
 
-@pytest.fixture(scope="session")
-def fast_ingest_config() -> IngestSettings:
-    return IngestSettings(
-        do_ocr=False,
-        do_table_structure=False,
-        generate_page_images=False,
-        generate_picture_images=False,
-        do_picture_classification=False,
-        do_picture_description=False,
-    )
-
-
 @pytest.fixture(autouse=True)
-def reset_tokenizer_cache(monkeypatch: pytest.MonkeyPatch):
-    """Clear the lru_cache and reset class variables before each test."""
+def reset_tokenizer_cache():
+    """Clear lru_caches before each test to prevent state bleed."""
     _get_cached_tokenizer.cache_clear()
-    TextChunker._recursive_text_splitter = None
-
-    monkeypatch.setattr(chunking, "_INIT_LOCK", threading.Lock())
+    _get_splitter.cache_clear()
     yield
+    _get_cached_tokenizer.cache_clear()
+    _get_splitter.cache_clear()
 
 
 @pytest.fixture
@@ -117,7 +103,7 @@ def vector_store(
     monkeypatch.setattr(settings.search, "search_type", "similarity", raising=False)
 
     monkeypatch.setattr(
-        "backend.core.vector_store._get_huggingface_embeddings",
+        "backend.core.vector_store._get_fastembed_embeddings",
         lambda: MockEmbeddings(),
     )
 

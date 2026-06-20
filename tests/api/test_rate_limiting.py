@@ -3,12 +3,11 @@
 from io import BytesIO
 
 from httpx import AsyncClient
-from langchain_core.documents import Document
 import pytest
 import pytest_mock
+from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker
+from sqlmodel.ext.asyncio.session import AsyncSession
 
-from backend.api.app import app
-from backend.api.documents import get_vector_store
 from backend.api.limiter import limiter
 
 
@@ -22,22 +21,17 @@ class TestDocumentRateLimit:
         self,
         client: AsyncClient,
         mock_pdf_bytes: bytes,
+        db_engine: AsyncEngine,
         mocker: pytest_mock.MockerFixture,
     ) -> None:
-        parsed_doc = Document(
-            page_content="hello",
-            metadata={"filename": "test.pdf", "page_number": 1},
-        )
         _ = mocker.patch(
-            "backend.api.documents.DocumentIngestor.ingest_async",
-            new=mocker.AsyncMock(return_value=[parsed_doc]),
+            "backend.api.documents.get_session_factory",
+            return_value=async_sessionmaker(
+                bind=db_engine,
+                class_=AsyncSession,
+                expire_on_commit=False,
+            ),
         )
-        _ = mocker.patch(
-            "backend.api.documents.TextChunker.achunk_text",
-            new=mocker.AsyncMock(return_value=[parsed_doc]),
-        )
-        mock_vs = app.dependency_overrides[get_vector_store]()
-        mock_vs.ainsert_docs = mocker.AsyncMock(return_value=None)
 
         for _ in range(10):
             resp = await client.post(
@@ -50,7 +44,7 @@ class TestDocumentRateLimit:
                     )
                 },
             )
-            assert resp.status_code == 201
+            assert resp.status_code == 202
 
         resp = await client.post(
             url="/api/v1/chats/sess1/documents/",
@@ -68,22 +62,17 @@ class TestDocumentRateLimit:
         self,
         client: AsyncClient,
         mock_pdf_bytes: bytes,
+        db_engine: AsyncEngine,
         mocker: pytest_mock.MockerFixture,
     ) -> None:
-        parsed_doc = Document(
-            page_content="hello",
-            metadata={"filename": "test.pdf", "page_number": 1},
-        )
         _ = mocker.patch(
-            "backend.api.documents.DocumentIngestor.ingest_async",
-            new=mocker.AsyncMock(return_value=[parsed_doc]),
+            "backend.api.documents.get_session_factory",
+            return_value=async_sessionmaker(
+                bind=db_engine,
+                class_=AsyncSession,
+                expire_on_commit=False,
+            ),
         )
-        _ = mocker.patch(
-            "backend.api.documents.TextChunker.achunk_text",
-            new=mocker.AsyncMock(return_value=[parsed_doc]),
-        )
-        mock_vs = app.dependency_overrides[get_vector_store]()
-        mock_vs.ainsert_docs = mocker.AsyncMock(return_value=None)
 
         resp = await client.post(
             url="/api/v1/chats/sess1/documents/",
@@ -95,7 +84,7 @@ class TestDocumentRateLimit:
                 )
             },
         )
-        assert resp.status_code == 201
+        assert resp.status_code == 202
 
 
 class TestMessageRateLimit:
