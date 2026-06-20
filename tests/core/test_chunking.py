@@ -38,7 +38,9 @@ class TestTokenizerCache:
 class TestTextChunker:
     async def test_achunk_text_returns_documents(self, mocker: MockerFixture) -> None:
         expected = [Document(page_content="chunk1"), Document(page_content="chunk2")]
-        mocker.patch.object(TextChunker, "_split_documents", return_value=expected)
+        _ = mocker.patch.object(
+            target=TextChunker, attribute="_split_documents", return_value=expected
+        )
 
         result = await TextChunker().achunk_text([Document(page_content="input")])
         assert result == expected
@@ -66,8 +68,13 @@ class TestTextChunker:
         self, mocker: MockerFixture
     ) -> None:
         mock_splitter = MagicMock()
-        mock_splitter.chunks.return_value = ["  ", "real content"]
-        mocker.patch("backend.core.chunking._get_splitter", return_value=mock_splitter)
+        _ = mock_splitter.chunks.return_value = [  # pyright: ignore[reportAny]
+            "  ",
+            "real content",
+        ]
+        _ = mocker.patch(
+            "backend.core.chunking._get_splitter", return_value=mock_splitter
+        )
 
         result = await TextChunker().achunk_text([Document(page_content="anything")])
         contents = [d.page_content for d in result]

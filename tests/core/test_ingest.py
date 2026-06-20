@@ -1,26 +1,28 @@
+# pyright: reportPrivateUsage=none
+
 from io import BytesIO
 from pathlib import Path
 from unittest.mock import AsyncMock
 
 import docx as python_docx
-import openpyxl
 from langchain_core.documents import Document
-import pytest
+import openpyxl
 from pypdf import PdfWriter
+import pytest
 from pytest_mock.plugin import MockerFixture
 
 from backend.core.config import IngestSettings
 from backend.core.ingest import DocumentIngestor, StrictMetadata
 
 
-def _make_pdf(tmp_path: Path, text: str = "Hello PDF") -> Path:
+def _make_pdf(tmp_path: Path) -> Path:
     writer = PdfWriter()
     page = writer.add_blank_page(width=200, height=200)
     page.merge_page(page)
     buf = BytesIO()
-    writer.write(buf)
+    _ = writer.write(stream=buf)
     path = tmp_path / "test.pdf"
-    path.write_bytes(buf.getvalue())
+    _ = path.write_bytes(data=buf.getvalue())
     return path
 
 
@@ -32,7 +34,7 @@ def _make_docx(
 ) -> Path:
     doc = python_docx.Document()
     for text in paragraphs or ["Hello DOCX"]:
-        doc.add_paragraph(text)
+        _ = doc.add_paragraph(text)
     if table_rows:
         table = doc.add_table(rows=len(table_rows), cols=len(table_rows[0]))
         for r, row in enumerate(table_rows):
@@ -41,7 +43,7 @@ def _make_docx(
     if header_text:
         doc.sections[0].header.paragraphs[0].text = header_text
     path = tmp_path / "test.docx"
-    doc.save(str(path))
+    doc.save(path_or_stream=str(path))
     return path
 
 
@@ -59,11 +61,11 @@ def _make_xlsx(
             ws = default_sheet
             first = False
         else:
-            ws = wb.create_sheet(name)
+            ws = wb.create_sheet(title=name)  # pyright: ignore[reportAny]
         for row in rows:
-            ws.append(row)
+            _ = ws.append(iterable=row)
     path = tmp_path / "test.xlsx"
-    wb.save(str(path))
+    wb.save(filename=str(path))
     return path
 
 
@@ -109,9 +111,11 @@ class TestDocumentIngestor:
     ) -> None:
         mock_docs = [Document(page_content="text", metadata={"page": 2})]
         path = tmp_path / "test.pdf"
-        path.write_bytes(b"%PDF-1.4\n%test")
+        _ = path.write_bytes(data=b"%PDF-1.4\n%test")
 
-        mocker.patch.object(DocumentIngestor, "_load_pdf", return_value=mock_docs)
+        _ = mocker.patch.object(
+            target=DocumentIngestor, attribute="_load_pdf", return_value=mock_docs
+        )
         ingestor = DocumentIngestor(file_path=path)
 
         result = await ingestor.ingest_async()
@@ -124,9 +128,7 @@ class TestLoadPdf:
     async def test_returns_one_doc_per_page(self, tmp_path: Path) -> None:
         path = _make_pdf(tmp_path)
         ingestor = DocumentIngestor(file_path=path)
-        docs = await ingestor._load_pdf(
-            source=str(path)
-        )  # pyright: ignore[reportPrivateUsage]
+        docs = await ingestor._load_pdf(source=str(path))
         assert len(docs) == 1
         assert docs[0].metadata["file_type"] == "pdf"
         assert docs[0].metadata["total_pages"] == 1
@@ -136,9 +138,7 @@ class TestLoadPdf:
         path = _make_pdf(tmp_path)
         config = IngestSettings(pdf_extract_images=True)
         ingestor = DocumentIngestor(file_path=path, config=config)
-        docs = await ingestor._load_pdf(
-            source=str(path)
-        )  # pyright: ignore[reportPrivateUsage]
+        docs = await ingestor._load_pdf(source=str(path))
         assert len(docs) >= 1
 
 
@@ -146,9 +146,7 @@ class TestLoadDocx:
     async def test_basic_paragraphs(self, tmp_path: Path) -> None:
         path = _make_docx(tmp_path, paragraphs=["Hello", "World"])
         ingestor = DocumentIngestor(file_path=path)
-        docs = await ingestor._load_docx(
-            source=str(path)
-        )  # pyright: ignore[reportPrivateUsage]
+        docs = await ingestor._load_docx(source=str(path))
         assert len(docs) == 1
         assert "Hello" in docs[0].page_content
         assert "World" in docs[0].page_content
@@ -159,47 +157,37 @@ class TestLoadDocx:
         path = _make_docx(tmp_path, table_rows=[["Col1", "Col2"], ["Val1", "Val2"]])
         config = IngestSettings(docx_include_tables=True)
         ingestor = DocumentIngestor(file_path=path, config=config)
-        docs = await ingestor._load_docx(
-            source=str(path)
-        )  # pyright: ignore[reportPrivateUsage]
+        docs = await ingestor._load_docx(source=str(path))
         assert "Col1" in docs[0].page_content
 
     async def test_excludes_tables_when_disabled(self, tmp_path: Path) -> None:
         path = _make_docx(tmp_path, table_rows=[["Secret", "Data"]])
         config = IngestSettings(docx_include_tables=False)
         ingestor = DocumentIngestor(file_path=path, config=config)
-        docs = await ingestor._load_docx(
-            source=str(path)
-        )  # pyright: ignore[reportPrivateUsage]
+        docs = await ingestor._load_docx(source=str(path))
         assert "Secret" not in docs[0].page_content
 
     async def test_includes_headers_footers_when_enabled(self, tmp_path: Path) -> None:
         path = _make_docx(tmp_path, header_text="MY HEADER")
         config = IngestSettings(docx_include_headers_footers=True)
         ingestor = DocumentIngestor(file_path=path, config=config)
-        docs = await ingestor._load_docx(
-            source=str(path)
-        )  # pyright: ignore[reportPrivateUsage]
+        docs = await ingestor._load_docx(source=str(path))
         assert "MY HEADER" in docs[0].page_content
 
     async def test_excludes_headers_footers_when_disabled(self, tmp_path: Path) -> None:
         path = _make_docx(tmp_path, header_text="MY HEADER")
         config = IngestSettings(docx_include_headers_footers=False)
         ingestor = DocumentIngestor(file_path=path, config=config)
-        docs = await ingestor._load_docx(
-            source=str(path)
-        )  # pyright: ignore[reportPrivateUsage]
+        docs = await ingestor._load_docx(source=str(path))
         assert "MY HEADER" not in docs[0].page_content
 
 
 class TestLoadMd:
     async def test_returns_single_doc(self, tmp_path: Path) -> None:
         path = tmp_path / "test.md"
-        path.write_text("# Hello\nWorld")
+        _ = path.write_text(data="# Hello\nWorld")
         ingestor = DocumentIngestor(file_path=path)
-        docs = await ingestor._load_md(
-            source=str(path)
-        )  # pyright: ignore[reportPrivateUsage]
+        docs = await ingestor._load_md(source=str(path))
         assert len(docs) == 1
         assert "# Hello" in docs[0].page_content
         assert docs[0].metadata["file_type"] == "markdown"
@@ -210,9 +198,7 @@ class TestLoadXlsx:
     async def test_returns_one_doc_per_sheet(self, tmp_path: Path) -> None:
         path = _make_xlsx(tmp_path, sheets={"A": [["1"]], "B": [["2"]]})
         ingestor = DocumentIngestor(file_path=path)
-        docs = await ingestor._load_xlsx(
-            source=str(path)
-        )  # pyright: ignore[reportPrivateUsage]
+        docs = await ingestor._load_xlsx(source=str(path))
         assert len(docs) == 2
         assert docs[0].metadata["sheet"] == "A"
         assert docs[1].metadata["sheet"] == "B"
@@ -222,9 +208,7 @@ class TestLoadXlsx:
     async def test_excludes_empty_rows_by_default(self, tmp_path: Path) -> None:
         path = _make_xlsx(tmp_path, sheets={"Sheet": [["data"], [], ["more"]]})
         ingestor = DocumentIngestor(file_path=path)
-        docs = await ingestor._load_xlsx(
-            source=str(path)
-        )  # pyright: ignore[reportPrivateUsage]
+        docs = await ingestor._load_xlsx(source=str(path))
         lines = [l for l in docs[0].page_content.splitlines() if l.strip()]
         assert len(lines) == 2
 
@@ -232,9 +216,7 @@ class TestLoadXlsx:
         path = _make_xlsx(tmp_path, sheets={"Sheet": [["data"], [], ["more"]]})
         config = IngestSettings(xlsx_include_empty_rows=True)
         ingestor = DocumentIngestor(file_path=path, config=config)
-        docs = await ingestor._load_xlsx(
-            source=str(path)
-        )  # pyright: ignore[reportPrivateUsage]
+        docs = await ingestor._load_xlsx(source=str(path))
         assert len(docs[0].page_content.splitlines()) == 3
 
 
@@ -251,7 +233,7 @@ class TestPageNumberExtraction:
         self, metadata_dict: StrictMetadata, fallback_idx: int, expected_page: int
     ) -> None:
         assert (
-            DocumentIngestor._extract_page_number(  # pyright: ignore[reportPrivateUsage]
+            DocumentIngestor._extract_page_number(
                 metadata=metadata_dict, fallback_index=fallback_idx
             )
             == expected_page
