@@ -6,7 +6,7 @@ from typing import Any, ClassVar, Literal
 import uuid
 
 import sqlalchemy as sa
-from sqlmodel import CheckConstraint, Column, Field, SQLModel, String
+from sqlmodel import Column, Field, SQLModel, String
 
 
 class ChatSession(SQLModel, table=True):
@@ -29,16 +29,7 @@ class ChatSession(SQLModel, table=True):
 
 class ChatMessage(SQLModel, table=True):
     __tablename__: ClassVar[str] = "chat_messages"
-    __table_args__: ClassVar[dict[str, Any]] = {
-        "extend_existing": True,
-        "info": {
-            "check_constraints": [
-                CheckConstraint(
-                    sqltext="role IN ('user', 'ai')", name="chk_chat_messages_role"
-                )
-            ]
-        },
-    }
+    __table_args__: ClassVar[dict[str, Any]] = {"extend_existing": True}
 
     id: int | None = Field(default=None, primary_key=True)
     session_id: str = Field(
@@ -54,7 +45,7 @@ class ChatMessage(SQLModel, table=True):
         sa_column=Column(sa.JSON, nullable=True),
     )
     created_at: datetime = Field(
-        default_factory=lambda: datetime.now(timezone.utc),
+        default_factory=lambda: datetime.now(tz=timezone.utc),
         sa_column=Column(
             sa.DateTime(timezone=True),
             server_default=sa.func.now(),

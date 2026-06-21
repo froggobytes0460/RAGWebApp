@@ -1,3 +1,9 @@
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
 services:
   nginx:
     build:
@@ -10,6 +16,22 @@ services:
         condition: service_healthy
     networks:
       - frontend
+    restart: unless-stopped
+    stop_grace_period: 10s
+    logging: *default-logging
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+      - CHOWN
+      - SETUID
+      - SETGID
+      - DAC_OVERRIDE
+    deploy:
+      resources:
+        limits:
+          cpus: "0.50"
+          memory: 128M
 
   api:
     build:
@@ -18,43 +40,67 @@ services:
     expose:
       - "8000"
     env_file: .env.docker
-    environment:
-      DATABASE__URI: postgresql+asyncpg://raguser:ragpassword@postgres:5432/ragdb
     depends_on:
       qdrant:
         condition: service_healthy
       postgres:
         condition: service_healthy
-    healthcheck:
-      test: ["CMD-SHELL", "python -c \"import urllib.request, sys; r = urllib.request.urlopen('http://localhost:8000/api/health'); sys.exit(0 if r.status == 200 else 1)\""]
-      interval: 15s
-      timeout: 10s
-      retries: 5
-      start_period: 60s
     networks:
       - frontend
       - backend
+    restart: unless-stopped
+    stop_grace_period: 30s
+    logging: *default-logging
+    cap_drop:
+      - ALL
+    tmpfs:
+      - /tmp:size=512M,mode=1777
+    deploy:
+      resources:
+        limits:
+          cpus: "2.00"
+          memory: 4G
 
   postgres:
-    image: postgres:17-alpine
+    build:
+      context: ./postgres
+      dockerfile: Dockerfile
+    command: postgres -c config_file=/etc/postgresql/postgresql.conf
     expose:
       - "5432"
-    environment:
-      POSTGRES_USER: raguser
-      POSTGRES_PASSWORD: ragpassword
-      POSTGRES_DB: ragdb
+    env_file: .env.docker
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      - ./postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+      - ./postgres/postgresql.conf:/etc/postgresql/postgresql.conf:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U raguser -d ragdb"]
       interval: 10s
       timeout: 5s
       retries: 5
+      start_period: 20s
     networks:
       - backend
+    restart: unless-stopped
+    stop_grace_period: 30s
+    logging: *default-logging
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - FOWNER
+      - SETUID
+      - SETGID
+      - DAC_READ_SEARCH
+    deploy:
+      resources:
+        limits:
+          cpus: "1.00"
+          memory: 512M
 
   qdrant:
-    image: qdrant/qdrant:latest
+    image: qdrant/qdrant:v1.18@sha256:75eab8c4ba42096724fdcfde8b4de0b5713d529dde32f285a1f86fdcb2c9e50c
+    pull_policy: missing
     expose:
       - "6333"
     volumes:
@@ -64,17 +110,32 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+      start_period: 20s
     networks:
       - backend
+    restart: unless-stopped
+    stop_grace_period: 20s
+    logging: *default-logging
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - SETUID
+      - SETGID
+    deploy:
+      resources:
+        limits:
+          cpus: "1.00"
+          memory: 1G
 
 networks:
   frontend:
     driver: bridge
+    internal: false
   backend:
     driver: bridge
+    internal: true
 
 volumes:
   qdrant_data:
-  hf_cache:
-  docling_cache:
   postgres_data:
