@@ -1,0 +1,7 @@
+service:
+  https_port: 6333
+  grpc_port: 6334
+
+tls:
+  cert: /qdrant/tls/cert.pem
+  key: /qdrant/tls/key.pem

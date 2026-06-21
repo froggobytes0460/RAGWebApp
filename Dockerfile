@@ -8,8 +8,10 @@ RUN npm run build
 FROM nginx:alpine@sha256:20316569d8f81a160065d7d2a5eeffc7ca97d79022462ee255fd23fa103a6b5c AS nginx
 COPY --from=frontend-build /app/frontend/dist /usr/share/nginx/html
 COPY nginx/nginx.conf /etc/nginx/nginx.conf
+COPY nginx/certs/server.crt /etc/nginx/certs/server.crt
+COPY nginx/certs/server.key /etc/nginx/certs/server.key
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
-    CMD wget -qO- http://localhost/api/health || exit 1
+    CMD wget -qO- --no-check-certificate https://localhost/api/health || exit 1
 
 FROM python:3.13-slim@sha256:c33f0bc4364a6881bed1ec0cc2665e6c53c87a43e774aaeab88e6f17af105e4f AS api
 WORKDIR /app

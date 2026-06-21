@@ -60,10 +60,17 @@ class VectorStore:
         if isinstance(url_or_path, Path):
             client = AsyncQdrantClient(path=str(url_or_path))
         else:
+            grpc_options: dict[str, bytes] | None = None
+            ca_cert_path = settings.vector_store.tls_ca_cert
+            if ca_cert_path:
+                grpc_options = {"root_certificates": ca_cert_path.read_bytes()}
             client = AsyncQdrantClient(
                 url=str(url_or_path),
                 api_key=api_key,
                 prefer_grpc=settings.vector_store.prefer_qdrant_grpc,
+                grpc_port=settings.vector_store.grpc_port,
+                https=True,
+                grpc_options=grpc_options,
             )
         return cls(
             client, k=settings.search.top_k, vector_store_settings=settings.vector_store

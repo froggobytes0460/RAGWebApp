@@ -6,7 +6,7 @@ from pydantic.fields import Field
 from pydantic.functional_validators import field_validator, model_validator
 from pydantic.main import BaseModel
 from pydantic.networks import AnyHttpUrl, AnyUrl, PostgresDsn, UrlConstraints
-from pydantic.types import SecretStr
+from pydantic.types import FilePath, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 SqliteDsn = Annotated[
@@ -124,6 +124,17 @@ class VectorStoreSettings(BaseModel):
     prefer_qdrant_grpc: Annotated[
         bool, Field(description="Prefer using Qdrant gRPC instead of RestAPI.")
     ] = True
+
+    grpc_port: Annotated[
+        int, Field(ge=1, le=65535, description="Qdrant gRPC port.")
+    ] = 6334
+
+    tls_ca_cert: Annotated[
+        FilePath | None,
+        Field(
+            description="Path to CA cert for self-signed Qdrant TLS. None uses system CAs."
+        ),
+    ] = None
 
     @model_validator(mode="after")
     def validate_qdrant_auth(self) -> Self:
