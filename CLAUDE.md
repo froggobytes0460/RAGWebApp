@@ -34,7 +34,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 The app is an async Python RAG pipeline exposed over HTTP via FastAPI, with a React SPA frontend (`frontend/`) served as static files in production.
 
-**Document ingest flow:** `POST /v1/chats/{session_id}/documents` → `DocumentView` → `DocumentIngestor` → `TextChunker` → `VectorStore`
+**Document ingest flow:** `POST /v1/chats/{session_id}/documents` → `DocumentView` enqueues the job ID into `AppState.job_queue` and stores raw bytes in `AppState.file_store`, returning `202 Accepted` with a `job_id`. A background `run_ingestion_worker` coroutine (started in lifespan) dequeues job IDs, runs `DocumentIngestor` → `TextChunker` → `VectorStore`, and updates the `IngestionJob` row in SQLite. The client polls progress via `GET /v1/chats/{session_id}/documents/jobs/{job_id}/progress`, which is an SSE stream emitting `event: progress` until status is `done` or `failed`.
 
 **Chat flow:** `POST /v1/chats/{session_id}/messages` → `MessageView` → Qdrant retrieval → LLM client → SSE stream back to client; assistant reply is persisted to SQLite after the stream completes.
 
@@ -45,23 +45,26 @@ The app is an async Python RAG pipeline exposed over HTTP via FastAPI, with a Re
 - `app.py` – FastAPI app with an upload-size guard middleware (checks `Content-Length` *and* streams defensively).
 - `documents.py` – `DocumentView` class-based view (via `fastapi-cbv`) on prefix `/v1/chats/{session_id}/documents`. Handles upload, list, and delete. `VectorStore` is injected via `Depends(VectorStore.from_settings)`.
 - `messages.py` – `MessageView` CBV on prefix `/v1/chats/{session_id}/messages`. `POST /` retrieves context from Qdrant, streams the LLM reply as SSE (`event: chunk` / `event: done` / `event: error`), and persists both user and assistant messages to SQLite. `GET /` returns the ordered message history.
-- `schemas.py` – Pydantic models: `IngestResponse`, `MessageRequest` (with `top_k`, `score_threshold`, `filters`), `MessageResponse`, `RetrievedChunk`, `MetadataFilter`, `StreamChunk`, `MessageHistoryItem`.
+- `schemas.py` – Pydantic models: `IngestJobResponse`, `JobProgressEvent`, `MessageRequest` (with `top_k`, `score_threshold`, `filters`), `MessageResponse`, `RetrievedChunk`, `MetadataFilter`, `StreamChunk`, `MessageHistoryItem`.
+- `state.py` – `AppState` (Pydantic `BaseModel`): holds `job_queue: asyncio.Queue[str]` and `file_store: dict[str, tuple[str, bytes]]`. Attached to the FastAPI app as `app.typed_state` during lifespan startup.
 
 **Core** (`backend/core/`)
 
 - `config.py` – `Settings` (Pydantic `BaseSettings`, singleton `settings`). Nested sub-settings: `IngestSettings`, `VectorStoreSettings`, `TextChunkSettings`, `SearchSettings`, `LLMSettings`. Uses `env_nested_delimiter="__"` so e.g. `VECTOR_STORE__COLLECTION_NAME` maps to `settings.vector_store.collection_name`. Groq and Qdrant API keys are validated against strict regex patterns.
-- `ingest.py` – `DocumentIngestor` (Pydantic `BaseModel`). Binary-head validation via `verify_file_integrity` runs before Docling parses (guards against extension spoofing). Supported formats: `.pdf`, `.docx`, `.md`, `.xlsx`. Produces `Document` objects with `filename` and `page_number` in metadata.
-- `chunking.py` – `TextChunker`. Uses `RecursiveCharacterTextSplitter` with a HuggingFace tokenizer (`BAAI/bge-large-en-v1.5` by default). Tokenizer and splitter are module-level singletons (thread-safe via `lru_cache` + `threading.Lock`).
-- `vector_store.py` – `VectorStore` (Pydantic `BaseModel`). Wraps `QdrantVectorStore` (LangChain) with `QdrantClient` / `AsyncQdrantClient`. Supports local-path mode (sync-only fallback via `asyncio.to_thread`) and remote-URL mode (true async). Qdrant payload indexes on `metadata.session_id` (keyword) and `metadata.uploaded_at` (datetime) support scoped queries and TTL cleanup. Key methods: `ainit_collection`, `ainsert_docs`, `get_retriever`, `alist_documents`, `adelete_document`, `adelete_session`, `aclean_up_stale_vectors`.
+- `ingest.py` – `DocumentIngestor` (Pydantic `BaseModel`). Binary-head validation via `verify_file_integrity` guards against extension spoofing before parsing. Supported formats: `.pdf` (via `pypdf`), `.docx` (via `python-docx`), `.md`, `.xlsx`. Configurable via `IngestSettings`: `pdf_extract_images`, `docx_include_tables`, `docx_include_headers_footers`. Produces `Document` objects with `filename` and `page_number` in metadata.
+- `chunking.py` – `TextChunker`. Uses `semantic-text-splitter`'s `TextSplitter` with a HuggingFace `tokenizers` tokenizer (`BAAI/bge-small-en-v1.5` by default, fetched via `Tokenizer.from_pretrained`). Tokenizer and splitter are module-level singletons (thread-safe via `lru_cache` + `threading.Lock`).
+- `vector_store.py` – `VectorStore` (Pydantic `BaseModel`). Wraps `QdrantVectorStore` (LangChain) with `QdrantClient` / `AsyncQdrantClient`. Embeddings use `fastembed` (`_FastEmbedWrapper` wraps `fastembed.TextEmbedding`, default model `BAAI/bge-small-en-v1.5`). Supports local-path mode (sync-only fallback via `asyncio.to_thread`) and remote-URL mode (true async). Qdrant payload indexes on `metadata.session_id` (keyword) and `metadata.uploaded_at` (datetime) support scoped queries and TTL cleanup. Key methods: `ainit_collection`, `ainsert_docs`, `get_retriever`, `alist_documents`, `adelete_document`, `adelete_session`, `aclean_up_stale_vectors`.
 - `database.py` – SQLite async engine via SQLAlchemy + SQLModel. `get_engine` and `get_session_factory` are `lru_cache` singletons. `init_db` / `close_db` are called from FastAPI lifespan. `get_session` is the FastAPI dependency yielding `AsyncSession`.
-- `models.py` – SQLModel table models: `ChatSession` (PK: `id` str/UUID) and `ChatMessage` (PK: `id` int, FK to `chat_sessions.id`, `role` constrained to `'user'|'ai'`, `retrieved_chunks` stored as JSON).
+- `models.py` – SQLModel table models: `ChatSession` (PK: `id` str/UUID), `ChatMessage` (PK: `id` int, FK to `chat_sessions.id`, `role` constrained to `'user'|'ai'`, `retrieved_chunks` stored as JSON), and `IngestionJob` (PK: `id` str/UUID, `status` str, `progress` int 0–100, `error` optional str).
+- `ingestion_worker.py` – `run_ingestion_worker` coroutine consumes `job_queue`, runs the full ingest pipeline, and updates the `IngestionJob` row. `get_or_create_event(job_id)` returns a per-job `asyncio.Event` used to signal the SSE progress stream when the job record changes.
+- `logging.py` – `AppLogger` singleton (`app_logger`). Uses a `QueueHandler` + `QueueListener` for non-blocking async-safe logging. Configured via `LogSettings` during lifespan startup; noisy third-party loggers are silenced to `WARNING`.
 - `llms/` – LLM client abstraction. `LLMClientProto` (Protocol) defines `astream_response(documents, question, chat_history)`. `LLMClientFactory.from_settings()` returns the configured client. Concrete implementations: `groq.py` (Groq), `openrouter.py` (OpenRouter). `prompt.py` holds the shared prompt template.
 
 ### Key Invariants
 
 - `TextChunkSettings.chunk_overlap` must be strictly less than `chunk_size` (enforced by model validator).
 - The SSE stream in `messages.py` uses a separate `async_session_factory()` context to persist the assistant reply after streaming completes — the request-scoped `db` session is already committed and cannot be reused inside the generator.
-- `picture_classification` and `picture_description` toggles are silently forced off when `generate_picture_images=False`.
+- `IngestSettings` toggles (`pdf_extract_images`, `docx_include_tables`, `docx_include_headers_footers`) are per-format and independent.
 - File upload size is enforced twice: once via `Content-Length` header in middleware, once by streaming chunk accumulation in the route handler.
 
 **Frontend** (`frontend/src/`)
@@ -107,20 +110,21 @@ The `docker-compose.yml` runs four services: `nginx` (reverse proxy on port 80),
 
 - **Build and start**: `docker compose up --build`
 - **Stop**: `docker compose down`
-- HuggingFace and Docling model caches are persisted in named volumes (`hf_cache`, `docling_cache`) to avoid re-downloading on restart.
-- The API health probe hits `GET /api/health`; nginx only starts after it passes.
+- The FastEmbed model (`BAAI/bge-small-en-v1.5`) and the HuggingFace tokenizer are downloaded at first container startup (no volumes — image stays small, re-downloads on fresh containers).
+- The API liveness probe hits `GET /api/health` (lightweight, no dependency checks); nginx only starts after it passes. `GET /api/health/deep` checks PostgreSQL and Qdrant connectivity with latency and returns `503` if either is degraded.
+- Postgres credentials are injected via `POSTGRES_USER`, `POSTGRES_PASSWORD` (required — compose will error without it), and `POSTGRES_DB` in `.env.docker`. `DATABASE__URI` is assembled in `docker-compose.yml` from those variables.
 
 ## Environment Setup
 
 Copy `.env.example` to `.env` (local dev) or `.env.docker` (Docker). Key variables:
 
-| Variable                        | Default                                  | Notes                                                   |
-| :-----------------------------: | :--------------------------------------: | :-----------------------------------------------------: |
-| `DATABASE__URI`                 | `sqlite+aiosqlite:///./rag.db`           | Switch to `postgresql+asyncpg://...` in Docker          |
-| `VECTOR_STORE__URL_OR_PATH`     | `./.qdrant_local/`                       | Set to `http://qdrant:6333/` in Docker                  |
-| `VECTOR_STORE__EMBEDDING_MODEL` | `sentence-transformers/all-MiniLM-L6-v2` | Must match `VECTOR_STORE__VECTOR_SIZE` (384 for MiniLM) |
-| `LLM__PROVIDER`                 | `groq`                                   | Options: `groq`, `openrouter`                           |
-| `LLM__API_KEY`                  | —                                        | Required                                                |
+| Variable                        | Default                                                     | Notes                                                                       |
+| :-----------------------------: | :---------------------------------------------------------: | :-------------------------------------------------------------------------: |
+| `DATABASE__URI`                 | `sqlite+aiosqlite:///./rag.db`                              | Switch to `postgresql+asyncpg://...` in Docker                              |
+| `VECTOR_STORE__URL_OR_PATH`     | `./.qdrant_local/`                                          | Set to `http://qdrant:6333/` in Docker                                      |
+| `VECTOR_STORE__EMBEDDING_MODEL` | `BAAI/bge-small-en-v1.5`                                    | FastEmbed model; must match `VECTOR_STORE__VECTOR_SIZE` (384 for bge-small) |
+| `LLM__PROVIDER`                 | `groq`                                                      | Options: `groq`, `openrouter`                                               |
+| `LLM__API_KEY`                  | *Must be set by user*                                       | Required                                                                    |
 
 ## Important Notes
 
