@@ -121,6 +121,10 @@ class VectorStoreSettings(BaseModel):
         int, Field(ge=384, description="Size of embedding vectors.")
     ] = 384
 
+    prefer_qdrant_grpc: Annotated[
+        bool, Field(description="Prefer using Qdrant gRPC instead of RestAPI.")
+    ] = True
+
     @model_validator(mode="after")
     def validate_qdrant_auth(self) -> Self:
         url_or_path = self.url_or_path

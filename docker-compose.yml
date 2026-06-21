@@ -39,7 +39,6 @@ services:
       target: api
     expose:
       - "8000"
-    env_file: .env.docker
     depends_on:
       qdrant:
         condition: service_healthy
@@ -68,7 +67,6 @@ services:
     command: postgres -c config_file=/etc/postgresql/postgresql.conf
     expose:
       - "5432"
-    env_file: .env.docker
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
@@ -103,6 +101,9 @@ services:
     pull_policy: missing
     expose:
       - "6333"
+      - "6334"
+    environment:
+      QDRANT__SERVICE__API_KEY: ${VECTOR_STORE__API_KEY}
     volumes:
       - qdrant_data:/qdrant/storage
     healthcheck:

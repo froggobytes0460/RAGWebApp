@@ -1,4 +1,5 @@
 import asyncio
+from collections.abc import AsyncGenerator
 from functools import lru_cache
 from pathlib import Path
 from typing import cast
@@ -11,13 +12,13 @@ from fastapi_utils.cbv import cbv
 from werkzeug.utils import secure_filename
 
 from backend.api.limiter import limiter
-from backend.api.state import TypedFastAPI
 from backend.api.schemas import (
     DocumentDeleteResponse,
     IngestJobResponse,
     IngestResponse,
     JobProgressResponse,
 )
+from backend.api.state import TypedFastAPI
 from backend.core.config import settings
 from backend.core.database import get_session_factory
 from backend.core.ingest import DocumentIngestor
@@ -33,8 +34,14 @@ documents_router = APIRouter(
 
 
 @lru_cache(maxsize=1)
-def get_vector_store() -> VectorStore:
+def _get_vector_store() -> VectorStore:
     return VectorStore.from_settings()
+
+
+async def get_vector_store() -> AsyncGenerator[VectorStore]:
+    vector_store = _get_vector_store()
+    yield vector_store
+    await vector_store.aclose()
 
 
 @cbv(router=documents_router)

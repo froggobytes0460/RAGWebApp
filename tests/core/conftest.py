@@ -1,16 +1,11 @@
 # pyright: reportPrivateUsage=none
 
-from collections.abc import AsyncGenerator, Callable
-from pathlib import Path
-from typing import override
-from unittest.mock import AsyncMock, MagicMock
+from collections.abc import AsyncGenerator
+from unittest.mock import AsyncMock
 
-from langchain_core.embeddings import Embeddings
-from langchain_core.vectorstores.base import VectorStoreRetriever
-from langchain_qdrant import QdrantVectorStore
 import pytest
 from pytest_mock import MockerFixture
-from qdrant_client import AsyncQdrantClient, QdrantClient
+from qdrant_client import AsyncQdrantClient
 from qdrant_client.models import UpdateResult, UpdateStatus
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
 from sqlmodel import SQLModel
@@ -19,18 +14,6 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 from backend.core.chunking import _get_cached_tokenizer, _get_splitter
 from backend.core.config import settings
 from backend.core.vector_store import VectorStore
-
-
-class MockEmbeddings(Embeddings):
-    """Mock embeddings to prevent actual initialization of `HuggingFaceEmbeddings`."""
-
-    @override
-    def embed_documents(self, texts: list[str]) -> list[list[float]]:
-        return [[0.1] * settings.vector_store.vector_size for _ in texts]
-
-    @override
-    def embed_query(self, text: str) -> list[float]:
-        return [0.1] * settings.vector_store.vector_size
 
 
 @pytest.fixture(autouse=True)
@@ -44,57 +27,24 @@ def reset_tokenizer_cache():
 
 
 @pytest.fixture
-def mock_qdrant_clients(
-    mocker: MockerFixture, monkeypatch: pytest.MonkeyPatch
-) -> tuple[MagicMock, AsyncMock]:
-    mock_sync: MagicMock = mocker.MagicMock(spec=QdrantClient)
-    mock_async: AsyncMock = mocker.AsyncMock(spec=AsyncQdrantClient)
-
-    mock_sync.collection_exists = mocker.MagicMock(return_value=False)
-    mock_async.collection_exists = mocker.AsyncMock(return_value=False)
-
-    mock_sync.create_collection = mocker.MagicMock(return_value=True)
-    mock_async.create_collection = mocker.AsyncMock(return_value=True)
-
-    mock_sync.close = mocker.MagicMock()
-    mock_async.close = mocker.AsyncMock()
-
+def mock_qdrant_client(mocker: MockerFixture) -> AsyncMock:
     mock_success = UpdateResult(operation_id=1, status=UpdateStatus.COMPLETED)
-
-    mock_sync.create_payload_index = mocker.MagicMock(return_value=mock_success)
-    mock_async.create_payload_index = mocker.AsyncMock(return_value=mock_success)
-
-    mock_sync.delete = mocker.MagicMock(return_value=mock_success)
-    mock_async.delete = mocker.AsyncMock(return_value=mock_success)
-
-    mock_sync_factory: Callable[..., QdrantClient] = lambda *a, **kw: mock_sync
-    mock_async_factory: Callable[..., AsyncQdrantClient] = lambda *a, **kw: mock_async
-
-    monkeypatch.setattr("backend.core.vector_store.QdrantClient", mock_sync_factory)
-    monkeypatch.setattr(
-        "backend.core.vector_store.AsyncQdrantClient", mock_async_factory
-    )
-
-    return mock_sync, mock_async
+    mock = mocker.AsyncMock(spec=AsyncQdrantClient)
+    mock.collection_exists = mocker.AsyncMock(return_value=False)
+    mock.create_collection = mocker.AsyncMock(return_value=True)
+    mock.close = mocker.AsyncMock()
+    mock.create_payload_index = mocker.AsyncMock(return_value=mock_success)
+    mock.delete = mocker.AsyncMock(return_value=mock_success)
+    mock.upsert = mocker.AsyncMock(return_value=mock_success)
+    return mock
 
 
-@pytest.fixture(params=["local_path", "remote_url"])
+@pytest.fixture
 def vector_store(
-    request: pytest.FixtureRequest,
-    tmp_path: Path,
     mocker: MockerFixture,
     monkeypatch: pytest.MonkeyPatch,
-    mock_qdrant_clients: tuple[MagicMock, AsyncMock],
+    mock_qdrant_client: AsyncMock,
 ) -> VectorStore:
-    target_path_or_url: Path | str = (
-        tmp_path
-        if request.param == "local_path"  # pyright: ignore[reportAny]
-        else "http://localhost:6333"
-    )
-
-    monkeypatch.setattr(
-        settings.vector_store, "url_or_path", target_path_or_url, raising=False
-    )
     monkeypatch.setattr(
         settings.vector_store, "collection_name", "test_collection", raising=False
     )
@@ -103,28 +53,11 @@ def vector_store(
     monkeypatch.setattr(settings.search, "search_type", "similarity", raising=False)
 
     monkeypatch.setattr(
-        "backend.core.vector_store._get_fastembed_embeddings",
-        lambda: MockEmbeddings(),
+        "backend.core.vector_store._embed",
+        lambda texts: [[0.1] * settings.vector_store.vector_size for _ in texts],
     )
 
-    mock_sync, mock_async = mock_qdrant_clients
-    vs = VectorStore(
-        client=mock_sync,
-        async_client=mock_async if request.param == "remote_url" else None,
-    )
-
-    mock_lc_store = mocker.MagicMock(spec=QdrantVectorStore)
-    mock_lc_store.aadd_documents = mocker.AsyncMock(return_value=["mocked_id"])
-
-    mock_retriever = mocker.AsyncMock(spec=VectorStoreRetriever)
-    mock_retriever.ainvoke.return_value = []  # pyright: ignore[reportAny]
-    mock_lc_store.as_retriever.return_value = (  # pyright: ignore[reportAny]
-        mock_retriever
-    )
-
-    vs._vector_store = mock_lc_store
-
-    return vs
+    return VectorStore(mock_qdrant_client, vector_store_settings=settings.vector_store)
 
 
 @pytest.fixture

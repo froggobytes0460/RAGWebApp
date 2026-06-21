@@ -20,7 +20,10 @@ from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from starlette.types import ExceptionHandler
 
-from backend.api.documents import documents_router, get_vector_store
+from backend.api.documents import (
+    documents_router,
+    _get_vector_store,  # pyright: ignore[reportPrivateUsage]
+)
 from backend.api.schemas import BasicHealthResponse, DependencyStatus, HealthResponse
 from backend.api.state import AppState, TypedFastAPI
 from backend.api.limiter import limiter
@@ -52,7 +55,7 @@ async def lifespan(app: TypedFastAPI) -> AsyncGenerator[None]:
     app_logger.setup(log_settings=settings.log)
     app_logger.lifecycle(event="Application startup", level=settings.log.level)
 
-    vector_store = get_vector_store()
+    vector_store = _get_vector_store()
     _ = await vector_store.ainit_collection()
     _ = await asyncio.to_thread(_get_fastembed_embeddings)
     _ = await asyncio.to_thread(_get_cached_tokenizer)
@@ -131,11 +134,8 @@ async def _check_database() -> DependencyStatus:
 async def _check_vector_store() -> DependencyStatus:
     t0 = time.perf_counter()
     try:
-        vs = get_vector_store()
-        if vs.async_client is not None:
-            _ = await vs.async_client.get_collections()
-        else:
-            _ = await asyncio.to_thread(vs.client.get_collections)
+        vs = _get_vector_store()
+        _ = await vs._client.get_collections()  # pyright: ignore[reportPrivateUsage]
         return DependencyStatus(
             status="ok",
             latency_ms=round(number=(time.perf_counter() - t0) * 1000, ndigits=2),

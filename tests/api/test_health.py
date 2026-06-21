@@ -22,8 +22,8 @@ def mock_db_engine(mocker: pytest_mock.MockerFixture) -> MagicMock:
 @pytest.fixture
 def mock_async_vs(mocker: pytest_mock.MockerFixture) -> MagicMock:
     vs = mocker.MagicMock()
-    vs.async_client = mocker.AsyncMock()
-    vs.async_client.get_collections = mocker.AsyncMock(
+    vs._client = mocker.AsyncMock()
+    vs._client.get_collections = mocker.AsyncMock(
         return_value=CollectionsResponse(collections=[])
     )
     return vs
@@ -45,7 +45,7 @@ async def test_deep_health_ok(
     mock_async_vs: MagicMock,
 ) -> None:
     _ = mocker.patch("backend.api.app.get_engine", return_value=mock_db_engine)
-    _ = mocker.patch("backend.api.app.get_vector_store", return_value=mock_async_vs)
+    _ = mocker.patch("backend.api.app._get_vector_store", return_value=mock_async_vs)
     resp = await client.get(url="/api/health/deep")
 
     assert resp.status_code == 200
@@ -71,7 +71,7 @@ async def test_deep_health_db_degraded(
     mock_engine.connect.return_value = mock_conn
 
     _ = mocker.patch("backend.api.app.get_engine", return_value=mock_engine)
-    _ = mocker.patch("backend.api.app.get_vector_store", return_value=mock_async_vs)
+    _ = mocker.patch("backend.api.app._get_vector_store", return_value=mock_async_vs)
     resp = await client.get(url="/api/health/deep")
 
     assert resp.status_code == 503
@@ -88,13 +88,13 @@ async def test_deep_health_vector_store_degraded(
     mock_db_engine: MagicMock,
 ) -> None:
     mock_vs = mocker.MagicMock()
-    mock_vs.async_client = mocker.AsyncMock()
-    mock_vs.async_client.get_collections = mocker.AsyncMock(
+    mock_vs._client = mocker.AsyncMock()
+    mock_vs._client.get_collections = mocker.AsyncMock(
         side_effect=Exception("Qdrant unreachable")
     )
 
     _ = mocker.patch("backend.api.app.get_engine", return_value=mock_db_engine)
-    _ = mocker.patch("backend.api.app.get_vector_store", return_value=mock_vs)
+    _ = mocker.patch("backend.api.app._get_vector_store", return_value=mock_vs)
     resp = await client.get("/api/health/deep")
 
     assert resp.status_code == 503
@@ -102,24 +102,3 @@ async def test_deep_health_vector_store_degraded(
     assert body["status"] == "degraded"
     assert body["dependencies"]["vector_store"]["status"] == "degraded"
     assert "Qdrant unreachable" in body["dependencies"]["vector_store"]["detail"]
-
-
-async def test_deep_health_sync_client_fallback(
-    client: AsyncClient,
-    mocker: pytest_mock.MockerFixture,
-    mock_db_engine: MagicMock,
-) -> None:
-    """Covers the local-path mode where async_client is None."""
-    mock_vs = mocker.MagicMock()
-    mock_vs.async_client = None
-    mock_vs.client = mocker.MagicMock()
-    mock_vs.client.get_collections = mocker.MagicMock(
-        return_value=CollectionsResponse(collections=[])
-    )
-
-    _ = mocker.patch("backend.api.app.get_engine", return_value=mock_db_engine)
-    _ = mocker.patch("backend.api.app.get_vector_store", return_value=mock_vs)
-    resp = await client.get(url="/api/health/deep")
-
-    assert resp.status_code == 200
-    assert resp.json()["dependencies"]["vector_store"]["status"] == "ok"
