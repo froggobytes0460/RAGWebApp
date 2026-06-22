@@ -23,5 +23,15 @@ jobs:
       - name: Copy Docker environment blueprint
         run: cp .env.example .env.docker
 
+      - name: Generate self-signed TLS certificates
+        run: |
+          for dir in nginx/certs qdrant/certs postgres/certs; do
+            mkdir -p "$dir"
+            openssl req -x509 -newkey rsa:2048 -nodes -days 1 \
+              -keyout "$dir/server.key" \
+              -out "$dir/server.crt" \
+              -subj "/CN=localhost"
+          done
+
       - name: Build Docker images
         run: docker compose build
