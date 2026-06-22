@@ -58,7 +58,7 @@ def vector_store(
     monkeypatch.setattr(
         VectorStore,
         "_embed",
-        staticmethod[[list[str]], list[list[float]]](_embed_mock),
+        staticmethod(_embed_mock),
     )
 
     return VectorStore(mock_qdrant_client, vector_store_settings=settings.vector_store)
