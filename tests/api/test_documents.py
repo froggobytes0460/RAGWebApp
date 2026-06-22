@@ -54,7 +54,9 @@ class TestCreateDocument:
     ) -> None:
         resp = await client.post(
             url="/api/v1/chats/sess-abc/documents/",
-            files={"file": ("image.png", BytesIO(b"PNG data"), "image/png")},
+            files={
+                "file": ("image.png", BytesIO(initial_bytes=b"PNG data"), "image/png")
+            },
         )
 
         assert resp.status_code == 400
@@ -106,7 +108,7 @@ class TestListDocuments:
         async with AsyncClient(
             transport=ASGITransport(app=app), base_url="http://test"
         ) as http_client:
-            resp = await http_client.get("/api/v1/chats/sess-list/documents/")
+            resp = await http_client.get(url="/api/v1/chats/sess-list/documents/")
 
         app.dependency_overrides.clear()
 
@@ -132,7 +134,7 @@ class TestListDocuments:
         async with AsyncClient(
             transport=ASGITransport(app=app), base_url="http://test"
         ) as http_client:
-            resp = await http_client.get("/api/v1/chats/sess-empty/documents/")
+            resp = await http_client.get(url="/api/v1/chats/sess-empty/documents/")
 
         app.dependency_overrides.clear()
 
@@ -150,7 +152,7 @@ class TestDeleteDocument:
         mock_vs = app.dependency_overrides[get_vector_store]()
         mock_vs.adelete_document = mocker.AsyncMock(return_value=mock_result)
 
-        resp = await client.delete("/api/v1/chats/sess-del/documents/report.pdf")
+        resp = await client.delete(url="/api/v1/chats/sess-del/documents/report.pdf")
 
         assert resp.status_code == 202
         assert resp.json()["status"] == "completed"
@@ -174,7 +176,7 @@ class TestDeleteDocument:
             transport=ASGITransport(app=app), base_url="http://test"
         ) as http_client:
             resp = await http_client.delete(
-                "/api/v1/chats/sess-del/documents/my_report.pdf"
+                url="/api/v1/chats/sess-del/documents/my_report.pdf"
             )
 
         app.dependency_overrides.clear()

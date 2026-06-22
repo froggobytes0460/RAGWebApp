@@ -7,8 +7,9 @@ from langchain_core.messages import BaseMessage
 from backend.core.config import settings
 from backend.core.llms.groq import LLMGroqClient
 from backend.core.llms.openrouter import LLMOpenRouterClient
+from backend.core.llms.query_schema import VectorQuery
 
-__all__ = ["LLMClientFactory"]
+__all__ = ["LLMClientFactory", "LLMClientProto"]
 
 
 @runtime_checkable
@@ -22,6 +23,12 @@ class LLMClientProto(Protocol):
         question: str,
         chat_history: Sequence[BaseMessage] | None = None,
     ) -> AsyncIterator[str]: ...
+
+    async def generate_vectorstore_query(
+        self,
+        question: str,
+        chat_history: Sequence[BaseMessage] | None = None,
+    ) -> VectorQuery: ...
 
 
 class LLMClientFactory:
@@ -41,7 +48,7 @@ class LLMClientFactory:
             client, LLMClientProto
         ):  # pyright: ignore[reportUnnecessaryIsInstance]
             raise TypeError(
-                f"Provider '{provider}' (type: {type(client).__name__}) does not fully implement the required LLMClientProto interface."
+                f"Provider '{provider}' (type: {type(client).__name__}) does not fully implement the required `LLMClientProto` interface."
             )
 
         return client

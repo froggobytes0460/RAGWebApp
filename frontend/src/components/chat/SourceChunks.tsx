@@ -19,7 +19,7 @@ export function SourceChunks({ chunks }: SourceChunksProps) {
               {chunk.page_number != null && (
                 <span className="text-gray-500">p.{chunk.page_number}</span>
               )}
-              <Badge value={chunk.score} />
+              <Badge value={chunk.score} label={`#${i + 1}`} rank={i + 1} />
             </div>
             <p className="leading-relaxed line-clamp-4">{chunk.content}</p>
           </div>

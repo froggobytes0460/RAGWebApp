@@ -15,6 +15,23 @@ Instructions:
 </context>"""
 
 
+QUERY_GEN_SYSTEM_PROMPT = """You are a search query optimiser for a document retrieval system.
+
+Given a user question and optional chat history, produce a JSON object with exactly two keys:
+- "query": a concise, keyword-rich search string optimised for vector similarity retrieval (no question marks, no filler words).
+- "filters": an object with optional keys "filename" (string), "uploaded_after" (ISO-8601 UTC datetime string), "uploaded_before" (ISO-8601 UTC datetime string). Set each to null if not applicable.
+
+Return ONLY the raw JSON object. Do not include markdown, explanation, or any other text."""
+
+QUERY_GEN_PROMPT = ChatPromptTemplate(
+    messages=[
+        ("system", QUERY_GEN_SYSTEM_PROMPT),
+        MessagesPlaceholder(variable_name="chat_history", optional=True),
+        ("human", "{question}"),
+    ],
+    input_types={"chat_history": list[BaseMessage], "question": str},
+)
+
 RAG_PROMPT = ChatPromptTemplate(
     messages=[
         ("system", RAG_SYSTEM_PROMPT),

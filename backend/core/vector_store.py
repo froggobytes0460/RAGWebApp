@@ -15,7 +15,9 @@ from qdrant_client import models
 
 from backend.core.config import VectorStoreSettings, settings
 from backend.core.ingest import StrictMetadata
+from backend.core.llms.query_schema import QueryMetadataFilter
 from backend.core.logging import app_logger
+from backend.core.reranker import arerank
 
 
 @lru_cache(maxsize=1)
@@ -163,43 +165,80 @@ class VectorStore:
         return ids
 
     async def asearch_with_scores(
-        self, query: str, session_id: str, k: int | None = None
+        self,
+        query: str,
+        session_id: str,
+        k: int | None = None,
+        metadata_filter: QueryMetadataFilter | None = None,
+        score_threshold: float | None = None,
     ) -> list[tuple[Document, float]]:
         top_k = k or self.k
-        session_filter = models.Filter(
-            must=[
-                models.FieldCondition(
-                    key="metadata.session_id",
-                    match=models.MatchValue(value=session_id),
-                )
-            ]
-        )
+        fetch_k = top_k * 2 if settings.rerank.enabled else top_k
 
+        must_conditions: list[models.Condition] = [
+            models.FieldCondition(
+                key="metadata.session_id",
+                match=models.MatchValue(value=session_id),
+            )
+        ]
+
+        if metadata_filter:
+            if metadata_filter.filename:
+                must_conditions.append(
+                    models.FieldCondition(
+                        key="metadata.filename",
+                        match=models.MatchValue(value=metadata_filter.filename),
+                    )
+                )
+            range_kwargs: dict[str, datetime] = {}
+            if metadata_filter.uploaded_after:
+                range_kwargs["gte"] = metadata_filter.uploaded_after
+            if metadata_filter.uploaded_before:
+                range_kwargs["lt"] = metadata_filter.uploaded_before
+            if range_kwargs:
+                must_conditions.append(
+                    models.FieldCondition(
+                        key="metadata.uploaded_at",
+                        range=models.DatetimeRange(**range_kwargs),
+                    )
+                )
+
+        qdrant_filter = models.Filter(must=must_conditions)
         query_vector = (await asyncio.to_thread(self._embed, [query]))[0]
 
         if settings.search.search_type == "mmr":
-            return await self._mmr_search(
+            results = await self._mmr_search(
                 query_vector=query_vector,
-                session_filter=session_filter,
-                top_k=top_k,
+                session_filter=qdrant_filter,
+                top_k=fetch_k,
             )
+        else:
+            response = await self._client.query_points(
+                collection_name=self.vector_store_settings.collection_name,
+                query=query_vector,
+                query_filter=qdrant_filter,
+                limit=fetch_k,
+                with_payload=True,
+                score_threshold=(
+                    settings.search.score_threshold
+                    if settings.search.search_type == "similarity_score_threshold"
+                    else None
+                ),
+            )
+            results = [
+                (self._point_to_document(point=hit), hit.score)
+                for hit in response.points
+            ]
 
-        response = await self._client.query_points(
-            collection_name=self.vector_store_settings.collection_name,
-            query=query_vector,
-            query_filter=session_filter,
-            limit=top_k,
-            with_payload=True,
-            score_threshold=(
-                settings.search.score_threshold
-                if settings.search.search_type == "similarity_score_threshold"
-                else None
-            ),
-        )
+        if settings.rerank.enabled and results:
+            results = await arerank(query=query, scored_docs=results, top_k=top_k)
 
-        return [
-            (self._point_to_document(point=hit), hit.score) for hit in response.points
-        ]
+        if score_threshold is not None:
+            results = [
+                (doc, score) for doc, score in results if score >= score_threshold
+            ]
+
+        return results
 
     async def _mmr_search(
         self,

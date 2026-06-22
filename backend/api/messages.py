@@ -1,4 +1,5 @@
 from collections.abc import AsyncGenerator
+from functools import lru_cache
 import json
 from typing import cast
 
@@ -21,9 +22,12 @@ from backend.api.schemas import (
     RetrievedChunk,
     StreamChunk,
 )
+from backend.core.config import settings
 from backend.core.database import get_session, get_session_factory
 from backend.core.ingest import StrictMetadata
 from backend.core.llms import LLMClientFactory, LLMClientProto
+from backend.core.logging import app_logger
+from backend.core.llms.query_schema import QueryMetadataFilter, VectorQuery
 from backend.core.models import ChatMessage, ChatSession
 from backend.core.vector_store import VectorStore
 
@@ -34,7 +38,8 @@ messages_router = APIRouter(
 )
 
 
-def _get_llm_client() -> LLMClientProto:
+@lru_cache(maxsize=1)
+def get_llm_client() -> LLMClientProto:
     return LLMClientFactory.from_settings()
 
 
@@ -42,6 +47,9 @@ def _get_llm_client() -> LLMClientProto:
 class MessageView:
     db: AsyncSession = cast(AsyncSession, Depends(dependency=get_session))
     vector_store: VectorStore = cast(VectorStore, Depends(dependency=get_vector_store))
+    llm_client: LLMClientProto = cast(
+        LLMClientProto, Depends(dependency=get_llm_client)
+    )
 
     @messages_router.post(path="/", status_code=status.HTTP_201_CREATED)
     @limiter.limit(  # pyright: ignore[reportUnknownMemberType, reportUntypedFunctionDecorator]
@@ -55,10 +63,22 @@ class MessageView:
     ) -> StreamingResponse:
         """Save user message, retrieve vector context, stream LLM reply as SSE, save assistant reply."""
 
+        if settings.llm.generate_query:
+            vector_query = await self.llm_client.generate_vectorstore_query(
+                question=body.question,
+            )
+            app_logger.debug("Generated vector query: %s", vector_query.model_dump())
+        else:
+            vector_query = VectorQuery(
+                query=body.question, filters=QueryMetadataFilter()
+            )
+
         scored_docs = await self.vector_store.asearch_with_scores(
-            query=body.question,
+            query=vector_query.query,
             session_id=session_id,
             k=body.top_k,
+            metadata_filter=vector_query.filters,
+            score_threshold=body.score_threshold,
         )
 
         if not scored_docs:
@@ -113,13 +133,12 @@ class MessageView:
 
         await self.db.commit()
 
-        llm_client = _get_llm_client()
         async_session_factory = get_session_factory()
 
         async def event_stream() -> AsyncGenerator[str, None]:
             answer_parts: list[str] = []
             try:
-                async for text in llm_client.astream_response(
+                async for text in self.llm_client.astream_response(
                     documents=retrieved_docs,
                     question=body.question,
                     chat_history=chat_history,
