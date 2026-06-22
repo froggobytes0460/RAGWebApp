@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Annotated, Callable, ClassVar, Self, TypeAlias, cast
 
 import docx
-from langchain_core.documents.base import Document
+from langchain_core.documents import Document
 import openpyxl
 from pydantic.fields import Field, computed_field
 from pydantic.functional_validators import AfterValidator, model_validator

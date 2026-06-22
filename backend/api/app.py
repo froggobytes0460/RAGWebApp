@@ -72,24 +72,27 @@ async def lifespan(app: TypedFastAPI) -> AsyncGenerator[None]:
     )
 
     app.typed_state = AppState()
-    worker_task = asyncio.create_task(
-        coro=run_ingestion_worker(
-            queue=app.typed_state.job_queue,
-            file_store=app.typed_state.file_store,
-            vector_store=vector_store,
+    worker_tasks: list[asyncio.Task[None]] = [
+        asyncio.create_task(
+            coro=run_ingestion_worker(
+                queue=app.typed_state.job_queue,
+                file_store=app.typed_state.file_store,
+                vector_store=vector_store,
+            )
         )
+        for _ in range(settings.ingest.worker_concurrency)
+    ]
+    app_logger.lifecycle(
+        event="Ingestion workers started", count=settings.ingest.worker_concurrency
     )
-    app_logger.lifecycle(event="Ingestion worker started")
 
     yield  # App process
 
     # Shutdown
     app_logger.lifecycle(event="Application shutdown initiated")
-    _ = worker_task.cancel()
-    try:
-        await worker_task
-    except asyncio.CancelledError:
-        pass
+    for task in worker_tasks:
+        _ = task.cancel()
+    _ = await asyncio.gather(*worker_tasks, return_exceptions=True)
     scheduler.shutdown(wait=False)
     await vector_store.aclose()
     await close_db()
@@ -132,10 +135,7 @@ async def _check_vector_store() -> DependencyStatus:
     t0 = time.perf_counter()
     try:
         vs = get_vector_store()
-        if vs.async_client is not None:
-            _ = await vs.async_client.get_collections()
-        else:
-            _ = await asyncio.to_thread(vs.client.get_collections)
+        _ = await vs._client.get_collections()  # pyright: ignore[reportPrivateUsage]
         return DependencyStatus(
             status="ok",
             latency_ms=round(number=(time.perf_counter() - t0) * 1000, ndigits=2),

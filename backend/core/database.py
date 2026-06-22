@@ -14,6 +14,7 @@ def get_engine() -> AsyncEngine:
     return create_async_engine(
         url=str(settings.database.uri),
         echo=settings.database.echo_sql,
+        pool_pre_ping=True,
     )
 
 

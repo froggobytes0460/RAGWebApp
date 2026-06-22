@@ -6,7 +6,7 @@ from pydantic.fields import Field
 from pydantic.functional_validators import field_validator, model_validator
 from pydantic.main import BaseModel
 from pydantic.networks import AnyHttpUrl, AnyUrl, PostgresDsn, UrlConstraints
-from pydantic.types import SecretStr
+from pydantic.types import FilePath, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 SqliteDsn = Annotated[
@@ -45,6 +45,13 @@ class IngestSettings(BaseModel):
     max_file_size: Annotated[
         float, Field(gt=0, description="Maximum filesize for each file (in MB).")
     ] = 50
+
+    worker_concurrency: Annotated[
+        int,
+        Field(
+            gt=0, description="Number of ingestion workers processing jobs in parallel."
+        ),
+    ] = 4
 
     # PDF options
     pdf_extract_images: Annotated[
@@ -120,6 +127,29 @@ class VectorStoreSettings(BaseModel):
     vector_size: Annotated[
         int, Field(ge=384, description="Size of embedding vectors.")
     ] = 384
+
+    upsert_batch_size: Annotated[
+        int,
+        Field(
+            gt=0,
+            description="Number of vectors to upsert per batch to avoid gRPC deadline timeouts on large documents.",
+        ),
+    ] = 100
+
+    prefer_qdrant_grpc: Annotated[
+        bool, Field(description="Prefer using Qdrant gRPC instead of RestAPI.")
+    ] = True
+
+    grpc_port: Annotated[
+        int, Field(ge=1, le=65535, description="Qdrant gRPC port.")
+    ] = 6334
+
+    tls_ca_cert: Annotated[
+        FilePath | None,
+        Field(
+            description="Path to CA cert for self-signed Qdrant TLS. None uses system CAs."
+        ),
+    ] = None
 
     @model_validator(mode="after")
     def validate_qdrant_auth(self) -> Self:

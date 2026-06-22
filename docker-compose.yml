@@ -9,8 +9,10 @@ services:
     build:
       context: .
       target: nginx
+    pull_policy: missing
     ports:
       - "80:80"
+      - "443:443"
     depends_on:
       api:
         condition: service_healthy
@@ -39,7 +41,12 @@ services:
       target: api
     expose:
       - "8000"
-    env_file: .env.docker
+    pull_policy: missing
+    env_file: .env
+    environment:
+      VECTOR_STORE__TLS_CA_CERT: /etc/qdrant/ca.crt
+    volumes:
+      - ./qdrant/certs/server.crt:/etc/qdrant/ca.crt:ro
     depends_on:
       qdrant:
         condition: service_healthy
@@ -65,20 +72,15 @@ services:
     build:
       context: ./postgres
       dockerfile: Dockerfile
+    pull_policy: missing
     command: postgres -c config_file=/etc/postgresql/postgresql.conf
     expose:
       - "5432"
-    env_file: .env.docker
+    env_file: .env
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
       - ./postgres/postgresql.conf:/etc/postgresql/postgresql.conf:ro
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U raguser -d ragdb"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 20s
     networks:
       - backend
     restart: unless-stopped
@@ -99,18 +101,18 @@ services:
           memory: 512M
 
   qdrant:
-    image: qdrant/qdrant:v1.18@sha256:75eab8c4ba42096724fdcfde8b4de0b5713d529dde32f285a1f86fdcb2c9e50c
+    build:
+      context: ./qdrant
+      dockerfile: Dockerfile
     pull_policy: missing
     expose:
       - "6333"
+      - "6334"
+    environment:
+      QDRANT__SERVICE__API_KEY: ${VECTOR_STORE__API_KEY}
     volumes:
       - qdrant_data:/qdrant/storage
-    healthcheck:
-      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/6333 && echo -e 'GET /healthz HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n' >&3 && grep -q 'HTTP/1.1 200' <&3"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 20s
+      - ./qdrant/qdrant.yaml:/qdrant/config/production.yaml:ro
     networks:
       - backend
     restart: unless-stopped
