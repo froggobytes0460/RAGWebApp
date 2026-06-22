@@ -46,6 +46,13 @@ class IngestSettings(BaseModel):
         float, Field(gt=0, description="Maximum filesize for each file (in MB).")
     ] = 50
 
+    worker_concurrency: Annotated[
+        int,
+        Field(
+            gt=0, description="Number of ingestion workers processing jobs in parallel."
+        ),
+    ] = 4
+
     # PDF options
     pdf_extract_images: Annotated[
         bool,
@@ -120,6 +127,14 @@ class VectorStoreSettings(BaseModel):
     vector_size: Annotated[
         int, Field(ge=384, description="Size of embedding vectors.")
     ] = 384
+
+    upsert_batch_size: Annotated[
+        int,
+        Field(
+            gt=0,
+            description="Number of vectors to upsert per batch to avoid gRPC deadline timeouts on large documents.",
+        ),
+    ] = 100
 
     prefer_qdrant_grpc: Annotated[
         bool, Field(description="Prefer using Qdrant gRPC instead of RestAPI.")

@@ -1,5 +1,4 @@
 import asyncio
-from collections.abc import AsyncGenerator
 from functools import lru_cache
 from pathlib import Path
 from typing import cast
@@ -15,7 +14,6 @@ from backend.api.limiter import limiter
 from backend.api.schemas import (
     DocumentDeleteResponse,
     IngestJobResponse,
-    IngestResponse,
     JobProgressResponse,
 )
 from backend.api.state import TypedFastAPI
@@ -34,14 +32,8 @@ documents_router = APIRouter(
 
 
 @lru_cache(maxsize=1)
-def _get_vector_store() -> VectorStore:
+def get_vector_store() -> VectorStore:
     return VectorStore.from_settings()
-
-
-async def get_vector_store() -> AsyncGenerator[VectorStore]:
-    vector_store = _get_vector_store()
-    yield vector_store
-    await vector_store.aclose()
 
 
 @cbv(router=documents_router)
@@ -130,7 +122,7 @@ class DocumentView:
                     chunk_count=job.chunk_count,
                     error=job.error,
                 )
-                yield f"event: progress\ndata: {payload.model_dump_json()}\n\n"
+                yield f"event: progress\ndata: {payload.model_dump_json(exclude_none=True)}\n\n"
 
                 if job.status in ("done", "failed"):
                     break
@@ -157,7 +149,7 @@ class DocumentView:
 
         return await self.vector_store.alist_documents(session_id=session_id)
 
-    @documents_router.delete("/{filename}", status_code=status.HTTP_202_ACCEPTED)
+    @documents_router.delete(path="/{filename}", status_code=status.HTTP_202_ACCEPTED)
     async def delete_document(
         self, session_id: str, filename: str
     ) -> DocumentDeleteResponse:
@@ -167,11 +159,3 @@ class DocumentView:
             session_id=session_id, filename=filename
         )
         return DocumentDeleteResponse(status=del_result.status)
-
-
-# Keep IngestResponse importable for external references
-__all__ = [
-    "documents_router",
-    "get_vector_store",
-    "IngestResponse",
-]

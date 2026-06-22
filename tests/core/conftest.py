@@ -53,8 +53,11 @@ def vector_store(
     monkeypatch.setattr(settings.search, "search_type", "similarity", raising=False)
 
     monkeypatch.setattr(
-        "backend.core.vector_store._embed",
-        lambda texts: [[0.1] * settings.vector_store.vector_size for _ in texts],
+        VectorStore,
+        "_embed",
+        staticmethod(
+            lambda texts: [[0.1] * settings.vector_store.vector_size for _ in texts]
+        ),
     )
 
     return VectorStore(mock_qdrant_client, vector_store_settings=settings.vector_store)

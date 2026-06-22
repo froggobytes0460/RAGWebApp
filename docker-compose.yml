@@ -9,6 +9,7 @@ services:
     build:
       context: .
       target: nginx
+    pull_policy: missing
     ports:
       - "80:80"
       - "443:443"
@@ -40,6 +41,7 @@ services:
       target: api
     expose:
       - "8000"
+    pull_policy: missing
     env_file: .env
     environment:
       VECTOR_STORE__TLS_CA_CERT: /etc/qdrant/ca.crt
@@ -70,6 +72,7 @@ services:
     build:
       context: ./postgres
       dockerfile: Dockerfile
+    pull_policy: missing
     command: postgres -c config_file=/etc/postgresql/postgresql.conf
     expose:
       - "5432"
@@ -78,12 +81,6 @@ services:
       - postgres_data:/var/lib/postgresql/data
       - ./postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
       - ./postgres/postgresql.conf:/etc/postgresql/postgresql.conf:ro
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U raguser -d ragdb"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 20s
     networks:
       - backend
     restart: unless-stopped
@@ -116,12 +113,6 @@ services:
     volumes:
       - qdrant_data:/qdrant/storage
       - ./qdrant/qdrant.yaml:/qdrant/config/production.yaml:ro
-    healthcheck:
-      test: ["CMD-SHELL", "curl -sf -k https://127.0.0.1:6333/healthz || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 20s
     networks:
       - backend
     restart: unless-stopped

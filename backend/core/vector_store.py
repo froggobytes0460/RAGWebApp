@@ -1,5 +1,4 @@
 import asyncio
-from collections.abc import Iterable
 from datetime import datetime, timedelta, timezone
 from functools import lru_cache
 from pathlib import Path
@@ -10,6 +9,7 @@ from fastembed.common.types import NumpyArray
 from fastembed.text import TextEmbedding
 from langchain_core.documents import Document
 import numpy as np
+import numpy.typing as npt
 from qdrant_client import AsyncQdrantClient
 from qdrant_client import models
 
@@ -24,11 +24,6 @@ def _get_fastembed_embeddings() -> TextEmbedding:
         "Loading FastEmbed model: %s", settings.vector_store.embedding_model
     )
     return TextEmbedding(model_name=settings.vector_store.embedding_model)
-
-
-def _embed(texts: list[str]) -> Iterable[NumpyArray]:
-    model = _get_fastembed_embeddings()
-    return model.embed(documents=texts)
 
 
 class VectorStore:
@@ -136,24 +131,33 @@ class VectorStore:
 
         texts = [doc.page_content for doc in documents]
         ids = [str(uuid.uuid4()) for _ in documents]
+        batch_size = self.vector_store_settings.upsert_batch_size
+        batch_ranges = range(0, len(documents), batch_size)
 
-        _ = await self._client.upsert(
-            collection_name=self.vector_store_settings.collection_name,
-            points=[
-                models.PointStruct(
-                    id=point_id,
-                    vector=vector,  # pyright: ignore[reportArgumentType]
-                    payload={
-                        "page_content": doc.page_content,
-                        "metadata": doc.metadata,
-                    },
+        all_vectors: list[NumpyArray] = await asyncio.to_thread(self._embed, texts)
+
+        _ = await asyncio.gather(
+            *[
+                self._client.upsert(
+                    collection_name=self.vector_store_settings.collection_name,
+                    points=[
+                        models.PointStruct(
+                            id=point_id,
+                            vector=vector,  # pyright: ignore[reportArgumentType]
+                            payload={
+                                "page_content": doc.page_content,
+                                "metadata": doc.metadata,
+                            },
+                        )
+                        for point_id, vector, doc in zip(
+                            ids[s : s + batch_size],
+                            all_vectors[s : s + batch_size],
+                            documents[s : s + batch_size],
+                        )
+                    ],
                 )
-                for point_id, vector, doc in zip(
-                    ids,
-                    (await asyncio.to_thread(_embed, texts)),
-                    documents,
-                )
-            ],
+                for s in batch_ranges
+            ]
         )
 
         return ids
@@ -171,7 +175,7 @@ class VectorStore:
             ]
         )
 
-        [query_vector] = await asyncio.to_thread(_embed, [query])
+        query_vector = (await asyncio.to_thread(self._embed, [query]))[0]
 
         if settings.search.search_type == "mmr":
             return await self._mmr_search(
@@ -220,7 +224,11 @@ class VectorStore:
             return []
 
         n = len(hits)
-        candidate_vecs = np.array([hit.vector for hit in hits], dtype=float)
+        raw_vecs = [hit.vector for hit in hits]
+        if not all(isinstance(v, list) for v in raw_vecs):
+            # Named vectors or missing vectors — fall back to top-k by score
+            return [(self._point_to_document(point=h), h.score) for h in hits[:top_k]]
+        candidate_vecs = np.array(raw_vecs, dtype=float)
         relevance_scores = np.array([hit.score for hit in hits], dtype=float)
 
         max_sim_to_selected = np.zeros(n, dtype=float)
@@ -239,12 +247,9 @@ class VectorStore:
 
             rest = list(remaining)
             sims = cast(
-                np.ndarray[tuple[int], np.dtype[np.float64]],
-                candidate_vecs[rest] @ candidate_vecs[best],
+                npt.NDArray[np.float64], candidate_vecs[rest] @ candidate_vecs[best]
             )
-            _ = np.maximum(
-                max_sim_to_selected[rest], sims, out=max_sim_to_selected[rest]
-            )
+            max_sim_to_selected[rest] = np.maximum(max_sim_to_selected[rest], sims)
 
         return [
             (self._point_to_document(point=hits[i]), hits[i].score)
@@ -345,3 +350,8 @@ class VectorStore:
             page_content=payload.get("page_content", ""),  # pyright: ignore[reportAny]
             metadata=payload.get("metadata", {}),
         )
+
+    @staticmethod
+    def _embed(texts: list[str]) -> list[NumpyArray]:
+        model = _get_fastembed_embeddings()
+        return list(model.embed(documents=texts))

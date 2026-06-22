@@ -5,3 +5,6 @@ COPY certs/server.key /var/lib/postgresql/server.key
 RUN chown postgres:postgres /var/lib/postgresql/server.crt /var/lib/postgresql/server.key \
     && chmod 600 /var/lib/postgresql/server.key \
     && chmod 644 /var/lib/postgresql/server.crt
+
+HEALTHCHECK --interval=10s --timeout=5s --retries=5 --start-period=20s \
+    CMD pg_isready -U raguser -d ragdb

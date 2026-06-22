@@ -45,7 +45,7 @@ async def test_deep_health_ok(
     mock_async_vs: MagicMock,
 ) -> None:
     _ = mocker.patch("backend.api.app.get_engine", return_value=mock_db_engine)
-    _ = mocker.patch("backend.api.app._get_vector_store", return_value=mock_async_vs)
+    _ = mocker.patch("backend.api.app.get_vector_store", return_value=mock_async_vs)
     resp = await client.get(url="/api/health/deep")
 
     assert resp.status_code == 200
@@ -71,7 +71,7 @@ async def test_deep_health_db_degraded(
     mock_engine.connect.return_value = mock_conn
 
     _ = mocker.patch("backend.api.app.get_engine", return_value=mock_engine)
-    _ = mocker.patch("backend.api.app._get_vector_store", return_value=mock_async_vs)
+    _ = mocker.patch("backend.api.app.get_vector_store", return_value=mock_async_vs)
     resp = await client.get(url="/api/health/deep")
 
     assert resp.status_code == 503
@@ -94,7 +94,7 @@ async def test_deep_health_vector_store_degraded(
     )
 
     _ = mocker.patch("backend.api.app.get_engine", return_value=mock_db_engine)
-    _ = mocker.patch("backend.api.app._get_vector_store", return_value=mock_vs)
+    _ = mocker.patch("backend.api.app.get_vector_store", return_value=mock_vs)
     resp = await client.get("/api/health/deep")
 
     assert resp.status_code == 503

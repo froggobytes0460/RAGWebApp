@@ -11,7 +11,7 @@ COPY nginx/nginx.conf /etc/nginx/nginx.conf
 COPY nginx/certs/server.crt /etc/nginx/certs/server.crt
 COPY nginx/certs/server.key /etc/nginx/certs/server.key
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
-    CMD wget -qO- --no-check-certificate https://localhost/api/health || exit 1
+    CMD curl -sf -k https://localhost/api/health || exit 1
 
 FROM python:3.13-slim@sha256:c33f0bc4364a6881bed1ec0cc2665e6c53c87a43e774aaeab88e6f17af105e4f AS api
 WORKDIR /app
@@ -28,7 +28,7 @@ ENV HF_HOME=/tmp/hf_cache
 ENV FASTEMBED_CACHE_PATH=/tmp/fastembed_cache
 ENV XDG_CACHE_HOME=/tmp/cache
 USER appuser
-HEALTHCHECK --interval=15s --timeout=10s --start-period=60s --retries=5 \
-    CMD python -c "import urllib.request, sys; r = urllib.request.urlopen('http://localhost:8000/api/health'); sys.exit(0 if r.status == 200 else 1)"
+HEALTHCHECK --interval=15s --timeout=15s --start-period=120s --retries=5 \
+    CMD python -c "import urllib.request, sys; r = urllib.request.urlopen('http://localhost:8000/api/health', timeout=10); sys.exit(0 if r.status == 200 else 1)"
 EXPOSE 8000
 CMD ["/app/.venv/bin/uvicorn", "backend.api.app:app", "--host", "0.0.0.0", "--port", "8000"]

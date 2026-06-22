@@ -20,10 +20,7 @@ from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from starlette.types import ExceptionHandler
 
-from backend.api.documents import (
-    documents_router,
-    _get_vector_store,  # pyright: ignore[reportPrivateUsage]
-)
+from backend.api.documents import documents_router, get_vector_store
 from backend.api.schemas import BasicHealthResponse, DependencyStatus, HealthResponse
 from backend.api.state import AppState, TypedFastAPI
 from backend.api.limiter import limiter
@@ -55,7 +52,7 @@ async def lifespan(app: TypedFastAPI) -> AsyncGenerator[None]:
     app_logger.setup(log_settings=settings.log)
     app_logger.lifecycle(event="Application startup", level=settings.log.level)
 
-    vector_store = _get_vector_store()
+    vector_store = get_vector_store()
     _ = await vector_store.ainit_collection()
     _ = await asyncio.to_thread(_get_fastembed_embeddings)
     _ = await asyncio.to_thread(_get_cached_tokenizer)
@@ -75,24 +72,27 @@ async def lifespan(app: TypedFastAPI) -> AsyncGenerator[None]:
     )
 
     app.typed_state = AppState()
-    worker_task = asyncio.create_task(
-        coro=run_ingestion_worker(
-            queue=app.typed_state.job_queue,
-            file_store=app.typed_state.file_store,
-            vector_store=vector_store,
+    worker_tasks: list[asyncio.Task[None]] = [
+        asyncio.create_task(
+            coro=run_ingestion_worker(
+                queue=app.typed_state.job_queue,
+                file_store=app.typed_state.file_store,
+                vector_store=vector_store,
+            )
         )
+        for _ in range(settings.ingest.worker_concurrency)
+    ]
+    app_logger.lifecycle(
+        event="Ingestion workers started", count=settings.ingest.worker_concurrency
     )
-    app_logger.lifecycle(event="Ingestion worker started")
 
     yield  # App process
 
     # Shutdown
     app_logger.lifecycle(event="Application shutdown initiated")
-    _ = worker_task.cancel()
-    try:
-        await worker_task
-    except asyncio.CancelledError:
-        pass
+    for task in worker_tasks:
+        _ = task.cancel()
+    _ = await asyncio.gather(*worker_tasks, return_exceptions=True)
     scheduler.shutdown(wait=False)
     await vector_store.aclose()
     await close_db()
@@ -134,7 +134,7 @@ async def _check_database() -> DependencyStatus:
 async def _check_vector_store() -> DependencyStatus:
     t0 = time.perf_counter()
     try:
-        vs = _get_vector_store()
+        vs = get_vector_store()
         _ = await vs._client.get_collections()  # pyright: ignore[reportPrivateUsage]
         return DependencyStatus(
             status="ok",
