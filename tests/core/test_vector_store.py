@@ -3,12 +3,7 @@ from unittest.mock import AsyncMock
 from langchain_core.documents import Document
 import pytest_mock
 from qdrant_client import models
-from qdrant_client.http.models import (
-    GroupsResult,
-    PointGroup,
-    QueryResponse,
-    ScoredPoint,
-)
+from qdrant_client.http.models import QueryResponse
 
 from backend.core.vector_store import VectorStore
 
@@ -56,7 +51,7 @@ class TestVectorStoreDocuments:
         ids = await vector_store.ainsert_docs(documents=[doc], session_id=session_id)
         assert len(ids) == 1
 
-        mock_hit = mocker.MagicMock(spec=ScoredPoint)
+        mock_hit = mocker.MagicMock(spec=models.ScoredPoint)
         mock_hit.score = 0.9
         mock_hit.payload = {
             "page_content": doc.page_content,
@@ -84,15 +79,16 @@ class TestVectorStoreDocuments:
         mock_timestamp = "2026-06-15T13:34:00Z"
 
         def _make_group(filename: str) -> models.PointGroup:
-            hit = mocker.MagicMock(spec=ScoredPoint)
+            hit = mocker.MagicMock(spec=models.ScoredPoint)
             hit.payload = {"metadata": {"uploaded_at": mock_timestamp}}
             return models.PointGroup(id=filename, hits=[hit])
 
-        mock_qdrant_client.query_points_groups = (
-            mocker.AsyncMock(  # pyright: ignore[reportAny]
-                return_value=models.GroupsResult(
-                    groups=[_make_group("report.pdf"), _make_group("notes.txt")]
-                )
+        mock_qdrant_client.query_points_groups = mocker.AsyncMock(
+            return_value=models.GroupsResult(
+                groups=[
+                    _make_group(filename="report.pdf"),
+                    _make_group(filename="notes.txt"),
+                ]
             )
         )
 

@@ -1,6 +1,6 @@
 # pyright: reportPrivateUsage=none
 
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Callable
 from unittest.mock import AsyncMock
 
 import pytest
@@ -41,7 +41,6 @@ def mock_qdrant_client(mocker: MockerFixture) -> AsyncMock:
 
 @pytest.fixture
 def vector_store(
-    mocker: MockerFixture,
     monkeypatch: pytest.MonkeyPatch,
     mock_qdrant_client: AsyncMock,
 ) -> VectorStore:
@@ -52,12 +51,14 @@ def vector_store(
     monkeypatch.setattr(settings.vector_store, "ttl", 1, raising=False)
     monkeypatch.setattr(settings.search, "search_type", "similarity", raising=False)
 
+    _embed_mock: Callable[[list[str]], list[list[float]]] = lambda texts: [
+        [0.1] * settings.vector_store.vector_size for _ in texts
+    ]
+
     monkeypatch.setattr(
         VectorStore,
         "_embed",
-        staticmethod(
-            lambda texts: [[0.1] * settings.vector_store.vector_size for _ in texts]
-        ),
+        staticmethod[[list[str]], list[list[float]]](_embed_mock),
     )
 
     return VectorStore(mock_qdrant_client, vector_store_settings=settings.vector_store)
