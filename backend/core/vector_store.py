@@ -217,7 +217,8 @@ class VectorStore:
         score_threshold: float | None = None,
     ) -> list[tuple[Document, float]]:
         top_k = k or self.k
-        fetch_k = top_k * 2 if settings.rerank.enabled else top_k
+        hype_n = settings.ingest.hype_questions_per_chunk
+        fetch_k = top_k * (hype_n + 1) if settings.rerank.enabled else top_k
 
         must_conditions: list[models.Condition] = [
             models.FieldCondition(

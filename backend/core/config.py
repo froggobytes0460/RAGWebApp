@@ -64,6 +64,14 @@ class IngestSettings(BaseModel):
         ),
     ] = 4
 
+    hype_questions_per_chunk: Annotated[
+        int,
+        Field(
+            gt=0,
+            description="Number of hypothetical questions generated per chunk during HyPE indexing.",
+        ),
+    ] = 3
+
     # PDF options
     pdf_extract_images: Annotated[
         bool,
@@ -88,14 +96,6 @@ class IngestSettings(BaseModel):
         bool,
         Field(description="Include rows where all cells are empty in XLSX output."),
     ] = False
-
-    hype_questions_per_chunk: Annotated[
-        int,
-        Field(
-            gt=0,
-            description="Number of hypothetical questions generated per chunk during HyPE indexing.",
-        ),
-    ] = 3
 
 
 class VectorStoreSettings(BaseModel):

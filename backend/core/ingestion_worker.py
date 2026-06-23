@@ -1,7 +1,7 @@
 import asyncio
 from pathlib import Path
 import tempfile
-from typing import Literal
+from typing import Literal, cast
 
 from langchain_core.documents import Document
 from sqlalchemy.ext.asyncio import async_sessionmaker
@@ -10,7 +10,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 from backend.core.chunking import TextChunker
 from backend.core.config import settings
 from backend.core.database import get_session_factory
-from backend.core.ingest import DocumentIngestor
+from backend.core.ingest import DocumentIngestor, StrictMetadata
 from backend.core.llms import LLMClientFactory
 from backend.core.logging import app_logger
 from backend.core.models import IngestionJob
@@ -112,10 +112,17 @@ async def _run_pipeline(
             except asyncio.QueueEmpty:
                 return
             try:
+                chunk_metadata = cast(StrictMetadata, chunk.metadata)
+                filename = chunk_metadata.get("filename", "unknown")
+                page = chunk_metadata.get("page_number", chunk_metadata.get("page", ""))
+                header = (
+                    f"[Document: {filename}"
+                    + (f" | Page: {page}" if page else "")
+                    + "]"
+                )
+                grounded_chunk = f"{header}\n\n{chunk.page_content}"
                 questions = await asyncio.wait_for(
-                    fut=llm_client.generate_hype_questions(
-                        chunk=chunk.page_content, n=n
-                    ),
+                    fut=llm_client.generate_hype_questions(chunk=grounded_chunk, n=n),
                     timeout=30.0,
                 )
             except asyncio.TimeoutError:
