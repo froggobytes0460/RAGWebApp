@@ -194,6 +194,7 @@ class VectorStore:
                             payload={
                                 "page_content": doc.page_content,
                                 "metadata": doc.metadata,
+                                "chunk_id": point_id,
                             },
                         )
                         for point_id, vector, doc in zip(
@@ -234,7 +235,8 @@ class VectorStore:
             results = await self._mmr_search(
                 query_vector=query_vector,
                 session_filter=qdrant_filter,
-                top_k=fetch_k,
+                top_k=top_k,
+                candidate_k=fetch_k,
             )
         else:
             response = await self._client.query_points(
@@ -277,8 +279,9 @@ class VectorStore:
         query_vector: NumpyArray,
         session_filter: models.Filter,
         top_k: int,
+        candidate_k: int | None = None,
     ) -> list[tuple[Document, float]]:
-        fetch_k = top_k * 4
+        fetch_k = candidate_k if candidate_k is not None else top_k * 4
         lambda_mult = settings.search.lambda_mult
 
         mmr_response = await self._client.query_points(

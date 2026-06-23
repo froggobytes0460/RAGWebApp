@@ -111,6 +111,7 @@ async def _run_pipeline(
                 chunk = chunk_queue.get_nowait()
             except asyncio.QueueEmpty:
                 return
+            chunk_queue.task_done()
             try:
                 chunk_metadata = cast(StrictMetadata, chunk.metadata)
                 filename = chunk_metadata.get("filename", "unknown")
@@ -130,8 +131,6 @@ async def _run_pipeline(
                     "HyPE generation timed out for a chunk; using fallback."
                 )
                 questions = []
-            finally:
-                chunk_queue.task_done()
             chunk_question_pairs.append((chunk, questions))
 
     pool_size = min(5, len(text_chunks))

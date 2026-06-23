@@ -23,6 +23,7 @@ from backend.api.schemas import (
     StreamChunk,
 )
 from backend.core.database import get_session, get_session_factory
+from backend.core.logging import app_logger
 from backend.core.ingest import StrictMetadata
 from backend.core.llms import LLMClientFactory, LLMClientProto
 from backend.core.models import ChatMessage, ChatSession
@@ -91,14 +92,6 @@ class MessageView:
             self.db.add(instance=ChatSession(id=session_id))
             await self.db.flush()
 
-        user_msg = ChatMessage(
-            session_id=session_id,
-            role="user",
-            content=body.question,
-        )
-        self.db.add(instance=user_msg)
-        await self.db.flush()
-
         stmt = (
             select(ChatMessage)
             .where(ChatMessage.session_id == session_id)
@@ -114,9 +107,14 @@ class MessageView:
                 else AIMessage(content=m.content)
             )
             for m in prior_messages
-            if m.id != user_msg.id
         ]
 
+        user_msg = ChatMessage(
+            session_id=session_id,
+            role="user",
+            content=body.question,
+        )
+        self.db.add(instance=user_msg)
         await self.db.commit()
 
         async_session_factory = get_session_factory()
@@ -153,7 +151,12 @@ class MessageView:
                 yield f"event: done\ndata: {done_payload}\n\n"
 
             except Exception as exc:
-                error_payload = json.dumps(obj={"detail": str(exc)})
+                app_logger.exception("SSE stream error: %s", exc)
+                error_payload = json.dumps(
+                    obj={
+                        "detail": "An internal error occurred while generating the response."
+                    }
+                )
                 yield f"event: error\ndata: {error_payload}\n\n"
 
         return StreamingResponse(

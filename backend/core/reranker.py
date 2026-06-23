@@ -30,10 +30,15 @@ async def arerank(
     texts = [doc.page_content for doc in docs]
     batch_size = settings.rerank.batch_size
 
-    scores: list[float] = await asyncio.to_thread(
-        lambda: list(
-            _get_reranker().rerank(query=query, documents=texts, batch_size=batch_size)
-        )
+    scores: list[float] = await asyncio.wait_for(
+        asyncio.to_thread(
+            lambda: list(
+                _get_reranker().rerank(
+                    query=query, documents=texts, batch_size=batch_size
+                )
+            )
+        ),
+        timeout=settings.rerank.timeout,
     )
 
     normalized = [1.0 / (1.0 + math.exp(-s)) for s in scores]

@@ -291,6 +291,13 @@ class RerankSettings(BaseModel):
         Field(gt=0, description="Number of passages to score per reranking batch."),
     ] = 32
 
+    timeout: Annotated[
+        float,
+        Field(
+            gt=0, description="Timeout in seconds for the reranker cross-encoder call."
+        ),
+    ] = 60.0
+
     @field_validator("model_name")
     @classmethod
     def verify_model_name_is_available(cls, v: str) -> str:
