@@ -4,6 +4,7 @@ import type {
   JobProgressEvent,
   MessageHistoryItem,
 } from '../types/api'
+import { parseSseStream } from './sse'
 
 const BASE = '/api/v1/chats'
 
@@ -61,36 +62,24 @@ export const api = {
     signal?: AbortSignal,
   ): Promise<void> => {
     return fetch(`${BASE}/${sessionId}/documents/jobs/${jobId}/progress`, { signal })
-      .then((res) => {
+      .then(async (res) => {
         if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`)
-        const reader = res.body.getReader()
-        const decoder = new TextDecoder()
-        let buffer = ''
-
-        const pump = (): Promise<void> =>
-          reader.read().then(({ done, value }) => {
-            if (done) return
-            buffer += decoder.decode(value, { stream: true })
-            const parts = buffer.split('\n\n')
-            buffer = parts.pop() ?? ''
-            for (const part of parts) {
-              const dataLine = part.split('\n').find((l) => l.startsWith('data:'))
-              if (!dataLine) continue
-              try {
-                const evt = JSON.parse(dataLine.slice(5).trim()) as JobProgressEvent
-                if (evt.status === 'done' || evt.status === 'failed') {
-                  handlers.onDone(evt)
-                  return
-                }
-                handlers.onProgress(evt)
-              } catch {
-                // ignore malformed frames
+        await parseSseStream(
+          res.body,
+          ({ data }) => {
+            try {
+              const evt = JSON.parse(data) as JobProgressEvent
+              if (evt.status === 'done' || evt.status === 'failed') {
+                handlers.onDone(evt)
+                return true
               }
+              handlers.onProgress(evt)
+            } catch {
+              // ignore malformed frames
             }
-            return pump()
-          })
-
-        return pump()
+          },
+          signal,
+        )
       })
       .catch((err: unknown) => {
         if (err instanceof Error && err.name !== 'AbortError') {
