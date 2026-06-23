@@ -15,7 +15,6 @@ from qdrant_client import models
 
 from backend.core.config import VectorStoreSettings, settings
 from backend.core.ingest import StrictMetadata
-from backend.core.llms.query_schema import QueryMetadataFilter
 from backend.core.logging import app_logger
 from backend.core.reranker import arerank
 
@@ -121,6 +120,52 @@ class VectorStore:
             "uploaded_at": uploaded_at_res,
         }
 
+    async def ainsert_hype_docs(
+        self,
+        pairs: list[tuple[Document, list[str]]],
+        session_id: str,
+    ) -> list[str]:
+        curr_time = datetime.now(tz=timezone.utc).isoformat()
+        all_point_ids: list[str] = []
+        points_batch: list[models.PointStruct] = []
+
+        for chunk_doc, questions in pairs:
+            chunk_doc.metadata["session_id"] = session_id
+            chunk_doc.metadata["uploaded_at"] = curr_time
+            chunk_id = str(uuid.uuid4())
+
+            embed_texts = questions if questions else [chunk_doc.page_content]
+            vectors: list[NumpyArray] = await asyncio.to_thread(
+                self._embed, embed_texts
+            )
+
+            for vector in vectors:
+                point_id = str(uuid.uuid4())
+                all_point_ids.append(point_id)
+                points_batch.append(
+                    models.PointStruct(
+                        id=point_id,
+                        vector=vector,  # pyright: ignore[reportArgumentType]
+                        payload={
+                            "page_content": chunk_doc.page_content,
+                            "metadata": chunk_doc.metadata,
+                            "chunk_id": chunk_id,
+                        },
+                    )
+                )
+
+        batch_size = self.vector_store_settings.upsert_batch_size
+        _ = await asyncio.gather(
+            *[
+                self._client.upsert(
+                    collection_name=self.vector_store_settings.collection_name,
+                    points=points_batch[s : s + batch_size],
+                )
+                for s in range(0, len(points_batch), batch_size)
+            ]
+        )
+        return all_point_ids
+
     async def ainsert_docs(
         self, documents: list[Document], session_id: str
     ) -> list[str]:
@@ -169,7 +214,6 @@ class VectorStore:
         query: str,
         session_id: str,
         k: int | None = None,
-        metadata_filter: QueryMetadataFilter | None = None,
         score_threshold: float | None = None,
     ) -> list[tuple[Document, float]]:
         top_k = k or self.k
@@ -181,27 +225,6 @@ class VectorStore:
                 match=models.MatchValue(value=session_id),
             )
         ]
-
-        if metadata_filter:
-            if metadata_filter.filename:
-                must_conditions.append(
-                    models.FieldCondition(
-                        key="metadata.filename",
-                        match=models.MatchValue(value=metadata_filter.filename),
-                    )
-                )
-            range_kwargs: dict[str, datetime] = {}
-            if metadata_filter.uploaded_after:
-                range_kwargs["gte"] = metadata_filter.uploaded_after
-            if metadata_filter.uploaded_before:
-                range_kwargs["lt"] = metadata_filter.uploaded_before
-            if range_kwargs:
-                must_conditions.append(
-                    models.FieldCondition(
-                        key="metadata.uploaded_at",
-                        range=models.DatetimeRange(**range_kwargs),
-                    )
-                )
 
         qdrant_filter = models.Filter(must=must_conditions)
         query_vector = (await asyncio.to_thread(self._embed, [query]))[0]
@@ -229,6 +252,14 @@ class VectorStore:
                 (self._point_to_document(point=hit), hit.score)
                 for hit in response.points
             ]
+
+        # Deduplicate by chunk_id: keep highest-scoring point per chunk
+        seen: dict[str, tuple[Document, float]] = {}
+        for doc, score in results:
+            cid = str(doc.metadata.get("chunk_id") or id(doc))
+            if cid not in seen or score > seen[cid][1]:
+                seen[cid] = (doc, score)
+        results = list(seen.values())
 
         if settings.rerank.enabled and results:
             results = await arerank(query=query, scored_docs=results, top_k=top_k)

@@ -7,7 +7,6 @@ from langchain_core.messages import BaseMessage
 from backend.core.config import settings
 from backend.core.llms.groq import LLMGroqClient
 from backend.core.llms.openrouter import LLMOpenRouterClient
-from backend.core.llms.query_schema import VectorQuery
 
 __all__ = ["LLMClientFactory", "LLMClientProto"]
 
@@ -24,11 +23,7 @@ class LLMClientProto(Protocol):
         chat_history: Sequence[BaseMessage] | None = None,
     ) -> AsyncIterator[str]: ...
 
-    async def generate_vectorstore_query(
-        self,
-        question: str,
-        chat_history: Sequence[BaseMessage] | None = None,
-    ) -> VectorQuery: ...
+    async def generate_hype_questions(self, chunk: str, n: int) -> list[str]: ...
 
 
 class LLMClientFactory:

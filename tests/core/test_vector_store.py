@@ -1,11 +1,106 @@
 from unittest.mock import AsyncMock
 
 from langchain_core.documents import Document
+import pytest
 import pytest_mock
 from qdrant_client import models
 from qdrant_client.http.models import QueryResponse
 
 from backend.core.vector_store import VectorStore
+
+
+class TestHypeDocs:
+    async def test_ainsert_hype_docs_upserts_one_point_per_question(
+        self,
+        vector_store: VectorStore,
+        mock_qdrant_client: AsyncMock,
+    ) -> None:
+        _ = await vector_store.ainit_collection()
+        chunk = Document(page_content="Some passage.", metadata={"filename": "a.pdf"})
+        questions = ["What is this?", "Why is it here?", "When was it written?"]
+
+        ids = await vector_store.ainsert_hype_docs(
+            pairs=[(chunk, questions)], session_id="sess-hype"
+        )
+
+        assert len(ids) == 3
+        mock_qdrant_client.upsert.assert_called()  # pyright: ignore[reportAny]
+
+    async def test_ainsert_hype_docs_fallback_on_empty_questions(
+        self,
+        vector_store: VectorStore,
+        mock_qdrant_client: AsyncMock,
+    ) -> None:
+        _ = await vector_store.ainit_collection()
+        chunk = Document(
+            page_content="Fallback passage.", metadata={"filename": "b.pdf"}
+        )
+
+        ids = await vector_store.ainsert_hype_docs(
+            pairs=[(chunk, [])], session_id="sess-fallback"
+        )
+
+        assert len(ids) == 1
+
+    async def test_ainsert_hype_docs_stores_chunk_text_as_page_content(
+        self,
+        vector_store: VectorStore,
+        mock_qdrant_client: AsyncMock,
+    ) -> None:
+        _ = await vector_store.ainit_collection()
+        chunk = Document(
+            page_content="Original chunk text.", metadata={"filename": "c.pdf"}
+        )
+        questions = ["Question about it?"]
+
+        _ = await vector_store.ainsert_hype_docs(
+            pairs=[(chunk, questions)], session_id="sess-payload"
+        )
+
+        call_args = (
+            mock_qdrant_client.upsert.call_args_list
+        )  # pyright: ignore[reportAny]
+        assert call_args
+        points: list[models.PointStruct] = call_args[0].kwargs["points"]
+        payload = points[0].payload
+        assert payload is not None
+        assert (
+            payload["page_content"] == "Original chunk text."
+        )  # pyright: ignore[reportAny]
+        assert "chunk_id" in payload  # pyright: ignore[reportAny]
+
+    async def test_asearch_deduplicates_by_chunk_id(
+        self,
+        vector_store: VectorStore,
+        mock_qdrant_client: AsyncMock,
+        mocker: pytest_mock.MockerFixture,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setattr("backend.core.vector_store.settings.rerank.enabled", False)
+        _ = await vector_store.ainit_collection()
+
+        shared_chunk_id = "shared-chunk-123"
+
+        def _make_hit(score: float) -> models.ScoredPoint:
+            hit = mocker.MagicMock(spec=models.ScoredPoint)
+            hit.score = score
+            hit.payload = {
+                "page_content": "chunk text",
+                "metadata": {"chunk_id": shared_chunk_id},
+                "chunk_id": shared_chunk_id,
+            }
+            return hit
+
+        mock_qdrant_client.query_points = mocker.AsyncMock(
+            return_value=QueryResponse(points=[_make_hit(0.9), _make_hit(0.7)])
+        )
+
+        results = await vector_store.asearch_with_scores(
+            query="test", session_id="sess-dedup", k=5
+        )
+
+        assert len(results) == 1
+        assert results[0][1] == 0.9
 
 
 class TestVectorStoreCollection:

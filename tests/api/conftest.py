@@ -19,7 +19,6 @@ from backend.api.documents import get_vector_store
 from backend.api.messages import get_llm_client
 from backend.api.state import AppState
 from backend.core.database import get_session
-from backend.core.llms.query_schema import QueryMetadataFilter, VectorQuery
 
 
 @pytest.fixture
@@ -59,8 +58,8 @@ def _make_mock_llm(answer: str, mocker: pytest_mock.MockerFixture) -> MagicMock:
 
     mock_llm = mocker.MagicMock()
     mock_llm.astream_response = _stream
-    mock_llm.generate_vectorstore_query = mocker.AsyncMock(
-        return_value=VectorQuery(query="test query", filters=QueryMetadataFilter())
+    mock_llm.generate_hype_questions = mocker.AsyncMock(
+        return_value=["What is X?", "How does Y work?", "When did Z occur?"]
     )
     return mock_llm
 

@@ -1,9 +1,7 @@
 # pyright: reportExplicitAny=none
 
 from collections.abc import AsyncIterator, Sequence
-from typing import Annotated, Any, ClassVar, Self, cast
-
-from pydantic import ValidationError
+from typing import Annotated, Any, ClassVar, Self
 
 import groq
 from langchain_core.documents import Document
@@ -18,9 +16,10 @@ from tenacity import (
     wait_exponential_jitter,
 )
 
+import json
+
 from backend.core.config import settings
-from backend.core.llms.prompt import QUERY_GEN_PROMPT, RAG_PROMPT
-from backend.core.llms.query_schema import QueryMetadataFilter, VectorQuery
+from backend.core.llms.prompt import HYPE_PROMPT, RAG_PROMPT
 
 
 class LLMGroqClient(BaseModel):
@@ -55,25 +54,18 @@ class LLMGroqClient(BaseModel):
             )
         )
 
-    async def generate_vectorstore_query(
-        self,
-        question: str,
-        chat_history: Sequence[BaseMessage] | None = None,
-    ) -> VectorQuery:
-        chain = cast(
-            RunnableSerializable[dict[str, Any], VectorQuery],
-            QUERY_GEN_PROMPT
-            | self.groq_client.with_structured_output(  # pyright: ignore[reportUnknownMemberType]
-                schema=VectorQuery
-            ),
-        )
+    async def generate_hype_questions(self, chunk: str, n: int) -> list[str]:
+        chain = HYPE_PROMPT | self.groq_client
         try:
-            result = await chain.ainvoke(
-                input={"question": question, "chat_history": chat_history or []}
-            )
-            return result
-        except (ValidationError, Exception):
-            return VectorQuery(query=question, filters=QueryMetadataFilter())
+            result = await chain.ainvoke(input={"chunk": chunk, "n": n})
+            questions = json.loads(str(result.content))
+            if isinstance(questions, list) and all(
+                isinstance(q, str) for q in questions
+            ):
+                return questions[:n]
+            return []
+        except Exception:
+            return []
 
     async def astream_response(
         self,

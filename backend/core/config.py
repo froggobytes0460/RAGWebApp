@@ -89,6 +89,14 @@ class IngestSettings(BaseModel):
         Field(description="Include rows where all cells are empty in XLSX output."),
     ] = False
 
+    hype_questions_per_chunk: Annotated[
+        int,
+        Field(
+            gt=0,
+            description="Number of hypothetical questions generated per chunk during HyPE indexing.",
+        ),
+    ] = 3
+
 
 class VectorStoreSettings(BaseModel):
     """Settings for vector store."""
@@ -323,13 +331,6 @@ class LLMSettings(BaseModel):
         Literal["groq", "openrouter"],
         Field(description="LLM provider. Determines which client is instantiated."),
     ] = "groq"
-
-    generate_query: Annotated[
-        bool,
-        Field(
-            description="Use LLM to rewrite the user question into an optimised vector search query with metadata filters before retrieval."
-        ),
-    ] = True
 
 
 class DatabaseSettings(BaseModel):

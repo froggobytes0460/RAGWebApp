@@ -22,12 +22,9 @@ from backend.api.schemas import (
     RetrievedChunk,
     StreamChunk,
 )
-from backend.core.config import settings
 from backend.core.database import get_session, get_session_factory
 from backend.core.ingest import StrictMetadata
 from backend.core.llms import LLMClientFactory, LLMClientProto
-from backend.core.logging import app_logger
-from backend.core.llms.query_schema import QueryMetadataFilter, VectorQuery
 from backend.core.models import ChatMessage, ChatSession
 from backend.core.vector_store import VectorStore
 
@@ -63,21 +60,10 @@ class MessageView:
     ) -> StreamingResponse:
         """Save user message, retrieve vector context, stream LLM reply as SSE, save assistant reply."""
 
-        if settings.llm.generate_query:
-            vector_query = await self.llm_client.generate_vectorstore_query(
-                question=body.question,
-            )
-            app_logger.debug("Generated vector query: %s", vector_query.model_dump())
-        else:
-            vector_query = VectorQuery(
-                query=body.question, filters=QueryMetadataFilter()
-            )
-
         scored_docs = await self.vector_store.asearch_with_scores(
-            query=vector_query.query,
+            query=body.question,
             session_id=session_id,
             k=body.top_k,
-            metadata_filter=vector_query.filters,
             score_threshold=body.score_threshold,
         )
 
