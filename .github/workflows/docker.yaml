@@ -35,3 +35,7 @@ jobs:
 
       - name: Build Docker images
         run: docker compose --env-file .env.docker -f docker-compose.yml up -d --build
+
+      - name: Dump container logs on failure
+        if: failure()
+        run: docker compose -f docker-compose.yml logs --no-color
