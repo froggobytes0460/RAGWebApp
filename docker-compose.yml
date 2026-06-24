@@ -111,7 +111,7 @@ services:
       - "6334"
     env_file: .env.docker
     environment:
-      QDRANT__SERVICE__API_KEY: ${VECTOR_STORE__API_KEY?Necessary for vectorstore usage}
+      QDRANT__SERVICE__API_KEY: ${VECTOR_STORE__API_KEY:-}
     volumes:
       - qdrant_data:/qdrant/storage
       - ./qdrant/qdrant.yaml:/qdrant/config/production.yaml:ro
