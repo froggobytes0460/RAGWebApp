@@ -71,7 +71,10 @@ class TestHyPESystemPrompt:
         assert "{n}" in HYPE_SYSTEM_PROMPT
 
     def test_contains_json_array_instruction(self) -> None:
-        assert "JSON array" in HYPE_SYSTEM_PROMPT
+        assert (
+            'Example output: ["What is X?", "How does Y work?", "When did Z occur?"]'
+            in HYPE_SYSTEM_PROMPT
+        )
 
     def test_contains_diversity_rule(self) -> None:
         assert "diverse" in HYPE_SYSTEM_PROMPT
