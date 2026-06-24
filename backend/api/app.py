@@ -84,11 +84,12 @@ async def lifespan(app: TypedFastAPI) -> AsyncGenerator[None]:
 
     async with anyio.create_task_group() as tg:
         for _ in range(settings.ingest.worker_concurrency):
-            tg.start_soon(
+            _ = tg.start_soon(
                 run_ingestion_worker,
                 app.typed_state.job_queue,
                 app.typed_state.file_store,
                 vector_store,
+                name="Ingestion Worker",
             )
 
         yield  # App process

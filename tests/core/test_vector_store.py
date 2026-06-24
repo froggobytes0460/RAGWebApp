@@ -1,3 +1,4 @@
+from typing import cast
 from unittest.mock import AsyncMock
 
 from langchain_core.documents import Document
@@ -29,7 +30,6 @@ class TestHypeDocs:
     async def test_ainsert_hype_docs_fallback_on_empty_questions(
         self,
         vector_store: VectorStore,
-        mock_qdrant_client: AsyncMock,
     ) -> None:
         _ = await vector_store.ainit_collection()
         chunk = Document(
@@ -57,17 +57,15 @@ class TestHypeDocs:
             pairs=[(chunk, questions)], session_id="sess-payload"
         )
 
-        call_args = (
-            mock_qdrant_client.upsert.call_args_list
-        )  # pyright: ignore[reportAny]
+        call_args = (  # pyright: ignore[reportAny]
+            mock_qdrant_client.upsert.call_args_list  # pyright: ignore[reportAny]
+        )
         assert call_args
-        points: list[models.PointStruct] = call_args[0].kwargs["points"]
+        points = cast(list[models.PointStruct], call_args[0].kwargs["points"])
         payload = points[0].payload
         assert payload is not None
-        assert (
-            payload["page_content"] == "Original chunk text."
-        )  # pyright: ignore[reportAny]
-        assert "chunk_id" in payload  # pyright: ignore[reportAny]
+        assert payload["page_content"] == "Original chunk text."
+        assert "chunk_id" in payload
 
     async def test_asearch_deduplicates_by_chunk_id(
         self,
