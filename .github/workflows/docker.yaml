@@ -34,4 +34,4 @@ jobs:
           done
 
       - name: Build Docker images
-        run: docker compose build
+        run: docker compose --env-file .env.docker -f docker-compose.yml up -d --build
