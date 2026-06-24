@@ -1,6 +1,8 @@
 # pyright: reportAny=none
 
 import asyncio
+
+import anyio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from langchain_core.documents import Document
@@ -37,7 +39,7 @@ class TestEventHelpers:
         job_id = "evt-new-1"
         cleanup_event(job_id)
         event = get_or_create_event(job_id)
-        assert isinstance(event, asyncio.Event)
+        assert isinstance(event, anyio.Event)
         cleanup_event(job_id)
 
     def test_get_or_create_event_returns_same(self) -> None:

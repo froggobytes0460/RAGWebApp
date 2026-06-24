@@ -1,4 +1,5 @@
 import asyncio
+import anyio
 from pathlib import Path
 import tempfile
 from typing import Literal, cast
@@ -17,18 +18,19 @@ from backend.core.models import IngestionJob
 from backend.core.vector_store import VectorStore
 
 # Maps job_id → Event so the SSE progress stream can be woken up after each DB write.
-_progress_events: dict[str, asyncio.Event] = {}
+_progress_events: dict[str, anyio.Event] = {}
 
 
-def get_or_create_event(job_id: str) -> asyncio.Event:
+def get_or_create_event(job_id: str) -> anyio.Event:
     if job_id not in _progress_events:
-        _progress_events[job_id] = asyncio.Event()
+        _progress_events[job_id] = anyio.Event()
     return _progress_events[job_id]
 
 
 def signal_progress(job_id: str) -> None:
     event = _progress_events.get(job_id)
     if event:
+        _progress_events[job_id] = anyio.Event()
         event.set()
 
 
@@ -80,7 +82,7 @@ async def _run_pipeline(
         documents = await DocumentIngestor(file_path=temp_file).ingest_async()
 
     if not documents:
-        app_logger.job_empty(job_id, safe_filename)
+        app_logger.job_empty(job_id, filename=safe_filename)
         await _persist_job_update(
             job_id,
             session_factory,
@@ -92,7 +94,7 @@ async def _run_pipeline(
     await _persist_job_update(job_id, session_factory, progress=30)
 
     text_chunks = await TextChunker().achunk_text(documents=documents)
-    app_logger.job_chunked(job_id, len(text_chunks))
+    app_logger.job_chunked(job_id, chunk_count=len(text_chunks))
 
     await _persist_job_update(job_id, session_factory, progress=50)
 
@@ -122,11 +124,11 @@ async def _run_pipeline(
                     + "]"
                 )
                 grounded_chunk = f"{header}\n\n{chunk.page_content}"
-                questions = await asyncio.wait_for(
-                    fut=llm_client.generate_hype_questions(chunk=grounded_chunk, n=n),
-                    timeout=30.0,
-                )
-            except asyncio.TimeoutError:
+                with anyio.fail_after(delay=30.0):
+                    questions = await llm_client.generate_hype_questions(
+                        chunk=grounded_chunk, n=n
+                    )
+            except TimeoutError:
                 app_logger.warning(
                     "HyPE generation timed out for a chunk; using fallback."
                 )
@@ -134,7 +136,9 @@ async def _run_pipeline(
             chunk_question_pairs.append((chunk, questions))
 
     pool_size = min(5, len(text_chunks))
-    _ = await asyncio.gather(*[_worker() for _ in range(pool_size)])
+    async with anyio.create_task_group() as tg:
+        for _ in range(pool_size):
+            _ = tg.start_soon(func=_worker)
 
     await _persist_job_update(job_id, session_factory, progress=70)
 

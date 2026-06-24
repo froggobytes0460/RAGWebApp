@@ -1,10 +1,11 @@
 # pyright: reportAny=none
 
-import asyncio
-import time
+import anyio
+from anyio import to_thread
 from collections.abc import AsyncGenerator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from importlib.metadata import version as pkg_version
+import time
 from typing import Any, cast
 
 from apscheduler.schedulers.asyncio import (  # pyright: ignore[reportMissingTypeStubs]
@@ -21,18 +22,21 @@ from slowapi.errors import RateLimitExceeded
 from starlette.types import ExceptionHandler
 
 from backend.api.documents import documents_router, get_vector_store
-from backend.api.schemas import BasicHealthResponse, DependencyStatus, HealthResponse
-from backend.api.state import AppState, TypedFastAPI
 from backend.api.limiter import limiter
 from backend.api.messages import messages_router
-from backend.core.ingestion_worker import run_ingestion_worker
+from backend.api.schemas import BasicHealthResponse, DependencyStatus, HealthResponse
+from backend.api.state import AppState, TypedFastAPI
 from backend.core.chunking import (
     _get_cached_tokenizer,  # pyright: ignore[reportPrivateUsage]
 )
 from backend.core.config import BASE_DIR, settings
 from backend.core.database import close_db, get_engine, init_db
+from backend.core.ingestion_worker import run_ingestion_worker
 from backend.core.logging import app_logger
 import backend.core.models  # pyright: ignore[reportUnusedImport]
+from backend.core.reranker import (
+    _get_reranker,  # pyright: ignore[reportPrivateUsage]
+)
 from backend.core.vector_store import (
     _get_fastembed_embeddings,  # pyright: ignore[reportPrivateUsage]
 )
@@ -54,8 +58,10 @@ async def lifespan(app: TypedFastAPI) -> AsyncGenerator[None]:
 
     vector_store = get_vector_store()
     _ = await vector_store.ainit_collection()
-    _ = await asyncio.to_thread(_get_fastembed_embeddings)
-    _ = await asyncio.to_thread(_get_cached_tokenizer)
+    _ = await to_thread.run_sync(_get_fastembed_embeddings)
+    _ = await to_thread.run_sync(_get_cached_tokenizer)
+    if settings.rerank.enabled:
+        _ = await to_thread.run_sync(_get_reranker)
     await init_db()
 
     scheduler = AsyncIOScheduler()
@@ -72,27 +78,25 @@ async def lifespan(app: TypedFastAPI) -> AsyncGenerator[None]:
     )
 
     app.typed_state = AppState()
-    worker_tasks: list[asyncio.Task[None]] = [
-        asyncio.create_task(
-            coro=run_ingestion_worker(
-                queue=app.typed_state.job_queue,
-                file_store=app.typed_state.file_store,
-                vector_store=vector_store,
-            )
-        )
-        for _ in range(settings.ingest.worker_concurrency)
-    ]
     app_logger.lifecycle(
         event="Ingestion workers started", count=settings.ingest.worker_concurrency
     )
 
-    yield  # App process
+    async with anyio.create_task_group() as tg:
+        for _ in range(settings.ingest.worker_concurrency):
+            tg.start_soon(
+                run_ingestion_worker,
+                app.typed_state.job_queue,
+                app.typed_state.file_store,
+                vector_store,
+            )
 
-    # Shutdown
-    app_logger.lifecycle(event="Application shutdown initiated")
-    for task in worker_tasks:
-        _ = task.cancel()
-    _ = await asyncio.gather(*worker_tasks, return_exceptions=True)
+        yield  # App process
+
+        # Shutdown
+        app_logger.lifecycle(event="Application shutdown initiated")
+        tg.cancel_scope.cancel()
+
     scheduler.shutdown(wait=False)
     await vector_store.aclose()
     await close_db()
@@ -156,9 +160,7 @@ async def health_check() -> Response:
 
 @app.get(path="/api/health/deep", include_in_schema=False)
 async def deep_health_check() -> Response:
-    db_status, vs_status = await asyncio.gather(
-        _check_database(), _check_vector_store()
-    )
+    db_status, vs_status = await _check_database(), await _check_vector_store()
     deps = {"database": db_status, "vector_store": vs_status}
     overall: str = "ok" if all(d.status == "ok" for d in deps.values()) else "degraded"
     http_status = (

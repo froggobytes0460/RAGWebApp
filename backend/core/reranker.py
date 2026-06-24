@@ -1,7 +1,8 @@
-import asyncio
-import math
 from functools import lru_cache
+import math
 
+import anyio
+from anyio import to_thread
 from fastembed.rerank.cross_encoder import (  # pyright: ignore[reportMissingTypeStubs]
     TextCrossEncoder,
 )
@@ -30,16 +31,14 @@ async def arerank(
     texts = [doc.page_content for doc in docs]
     batch_size = settings.rerank.batch_size
 
-    scores: list[float] = await asyncio.wait_for(
-        asyncio.to_thread(
-            lambda: list(
+    with anyio.fail_after(delay=settings.rerank.timeout):
+        scores: list[float] = await to_thread.run_sync(
+            func=lambda: list[float](
                 _get_reranker().rerank(
                     query=query, documents=texts, batch_size=batch_size
                 )
             )
-        ),
-        timeout=settings.rerank.timeout,
-    )
+        )
 
     normalized = [1.0 / (1.0 + math.exp(-s)) for s in scores]
     paired = sorted(zip(docs, normalized), key=lambda x: x[1], reverse=True)

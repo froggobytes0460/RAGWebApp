@@ -22,10 +22,11 @@ COPY --chown=appuser:appgroup pyproject.toml uv.lock README.md ./
 RUN uv sync --no-dev --no-cache && chown -R appuser:appgroup /app/.venv
 COPY --chown=appuser:appgroup backend/ ./backend/
 RUN mkdir -p /app/logs && chown appuser:appgroup /app/logs
+RUN mkdir -p /var/cache/fastembed && chown appuser:appgroup /var/cache/fastembed
 ENV UV_NO_CACHE=1
 ENV PYTHONPATH=/app
 ENV HF_HOME=/tmp/hf_cache
-ENV FASTEMBED_CACHE_PATH=/tmp/fastembed_cache
+ENV FASTEMBED_CACHE_PATH=/var/cache/fastembed
 ENV XDG_CACHE_HOME=/tmp/cache
 USER appuser
 HEALTHCHECK --interval=15s --timeout=15s --start-period=120s --retries=5 \

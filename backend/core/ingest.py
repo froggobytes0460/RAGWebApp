@@ -1,10 +1,10 @@
 """Document ingestion utilities for loading and processing files efficiently."""
 
-import asyncio
 from collections.abc import AsyncIterator, Coroutine
 from pathlib import Path
 from typing import Annotated, Callable, ClassVar, Self, TypeAlias, cast
 
+from anyio import to_thread
 import docx
 from langchain_core.documents import Document
 import openpyxl
@@ -105,7 +105,7 @@ class DocumentIngestor(BaseModel):
                 )
             return docs
 
-        return await asyncio.to_thread(_parse)
+        return await to_thread.run_sync(_parse)
 
     async def _load_docx(self, source: str) -> list[Document]:
         def _parse() -> list[Document]:
@@ -137,10 +137,10 @@ class DocumentIngestor(BaseModel):
                 )
             ]
 
-        return await asyncio.to_thread(_parse)
+        return await to_thread.run_sync(_parse)
 
     async def _load_md(self, source: str) -> list[Document]:
-        text = await asyncio.to_thread(self.file_path.read_text, "utf-8")
+        text = await to_thread.run_sync(lambda: self.file_path.read_text("utf-8"))
         return [
             Document(
                 page_content=text,
@@ -181,7 +181,7 @@ class DocumentIngestor(BaseModel):
                 )
             return docs
 
-        return await asyncio.to_thread(_parse)
+        return await to_thread.run_sync(_parse)
 
     async def ingest_lazy(self) -> AsyncIterator[Document]:
         loaders: dict[str, Callable[[str], Coroutine[None, None, list[Document]]]] = {

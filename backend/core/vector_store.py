@@ -1,10 +1,11 @@
-import asyncio
 from datetime import datetime, timedelta, timezone
 from functools import lru_cache
 from pathlib import Path
 from typing import Literal, Self, cast
 import uuid
 
+import anyio
+from anyio import to_thread
 from fastembed.common.types import NumpyArray
 from fastembed.text import TextEmbedding
 from langchain_core.documents import Document
@@ -98,20 +99,18 @@ class VectorStore:
                 self.vector_store_settings.collection_name,
             )
 
-        session_id_res, uploaded_at_res = await asyncio.gather(
-            self._client.create_payload_index(
-                collection_name=self.vector_store_settings.collection_name,
-                field_name="metadata.session_id",
-                field_schema=models.KeywordIndexParams(
-                    type=models.KeywordIndexType.KEYWORD
-                ),
+        session_id_res = await self._client.create_payload_index(
+            collection_name=self.vector_store_settings.collection_name,
+            field_name="metadata.session_id",
+            field_schema=models.KeywordIndexParams(
+                type=models.KeywordIndexType.KEYWORD
             ),
-            self._client.create_payload_index(
-                collection_name=self.vector_store_settings.collection_name,
-                field_name="metadata.uploaded_at",
-                field_schema=models.DatetimeIndexParams(
-                    type=models.DatetimeIndexType.DATETIME
-                ),
+        )
+        uploaded_at_res = await self._client.create_payload_index(
+            collection_name=self.vector_store_settings.collection_name,
+            field_name="metadata.uploaded_at",
+            field_schema=models.DatetimeIndexParams(
+                type=models.DatetimeIndexType.DATETIME
             ),
         )
 
@@ -135,7 +134,7 @@ class VectorStore:
             chunk_id = str(uuid.uuid4())
 
             embed_texts = questions if questions else [chunk_doc.page_content]
-            vectors: list[NumpyArray] = await asyncio.to_thread(
+            vectors: list[NumpyArray] = await to_thread.run_sync(
                 self._embed, embed_texts
             )
 
@@ -155,15 +154,14 @@ class VectorStore:
                 )
 
         batch_size = self.vector_store_settings.upsert_batch_size
-        _ = await asyncio.gather(
-            *[
-                self._client.upsert(
-                    collection_name=self.vector_store_settings.collection_name,
-                    points=points_batch[s : s + batch_size],
-                )
-                for s in range(0, len(points_batch), batch_size)
-            ]
-        )
+        collection = self.vector_store_settings.collection_name
+
+        async def _upsert(batch: list[models.PointStruct]) -> None:
+            _ = await self._client.upsert(collection_name=collection, points=batch)
+
+        async with anyio.create_task_group() as tg:
+            for s in range(0, len(points_batch), batch_size):
+                _ = tg.start_soon(_upsert, points_batch[s : s + batch_size])
         return all_point_ids
 
     async def ainsert_docs(
@@ -181,32 +179,31 @@ class VectorStore:
         batch_size = self.vector_store_settings.upsert_batch_size
         batch_ranges = range(0, len(documents), batch_size)
 
-        all_vectors: list[NumpyArray] = await asyncio.to_thread(self._embed, texts)
+        all_vectors: list[NumpyArray] = await to_thread.run_sync(self._embed, texts)
+        collection = self.vector_store_settings.collection_name
 
-        _ = await asyncio.gather(
-            *[
-                self._client.upsert(
-                    collection_name=self.vector_store_settings.collection_name,
-                    points=[
-                        models.PointStruct(
-                            id=point_id,
-                            vector=vector,  # pyright: ignore[reportArgumentType]
-                            payload={
-                                "page_content": doc.page_content,
-                                "metadata": doc.metadata,
-                                "chunk_id": point_id,
-                            },
-                        )
-                        for point_id, vector, doc in zip(
-                            ids[s : s + batch_size],
-                            all_vectors[s : s + batch_size],
-                            documents[s : s + batch_size],
-                        )
-                    ],
-                )
-                for s in batch_ranges
-            ]
-        )
+        async def _upsert(batch: list[models.PointStruct]) -> None:
+            _ = await self._client.upsert(collection_name=collection, points=batch)
+
+        async with anyio.create_task_group() as tg:
+            for s in batch_ranges:
+                batch_points = [
+                    models.PointStruct(
+                        id=point_id,
+                        vector=vector,  # pyright: ignore[reportArgumentType]
+                        payload={
+                            "page_content": doc.page_content,
+                            "metadata": doc.metadata,
+                            "chunk_id": point_id,
+                        },
+                    )
+                    for point_id, vector, doc in zip(
+                        ids[s : s + batch_size],
+                        all_vectors[s : s + batch_size],
+                        documents[s : s + batch_size],
+                    )
+                ]
+                _ = tg.start_soon(_upsert, batch_points)
 
         return ids
 
@@ -229,7 +226,7 @@ class VectorStore:
         ]
 
         qdrant_filter = models.Filter(must=must_conditions)
-        query_vector = (await asyncio.to_thread(self._embed, [query]))[0]
+        query_vector = (await to_thread.run_sync(self._embed, [query]))[0]
 
         if settings.search.search_type == "mmr":
             results = await self._mmr_search(
