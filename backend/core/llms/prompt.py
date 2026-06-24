@@ -30,7 +30,7 @@ Given a text passage, generate exactly {n} distinct, specific questions that thi
 Rules:
 - Each question must be answerable solely from the passage.
 - Questions must be diverse — cover different aspects of the passage.
-- Return ONLY a JSON array of strings. No markdown, no explanation.
+- DO NOT return any kind of text other than JSON output.
 
 Example output: ["What is X?", "How does Y work?", "When did Z occur?"]"""
 

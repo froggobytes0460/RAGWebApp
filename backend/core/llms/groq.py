@@ -1,7 +1,7 @@
 # pyright: reportExplicitAny=none
 
 from collections.abc import AsyncIterator, Sequence
-from typing import Annotated, Any, ClassVar, Self
+from typing import Annotated, Any, ClassVar, Self, cast
 
 import groq
 from langchain_core.documents import Document
@@ -16,9 +16,8 @@ from tenacity import (
     wait_exponential_jitter,
 )
 
-import json
-
 from backend.core.config import settings
+from backend.core.llms.llm_schema import HypeQuestions
 from backend.core.llms.prompt import HYPE_PROMPT, RAG_PROMPT
 
 
@@ -55,15 +54,16 @@ class LLMGroqClient(BaseModel):
         )
 
     async def generate_hype_questions(self, chunk: str, n: int) -> list[str]:
-        chain = HYPE_PROMPT | self.groq_client
+        chain = cast(
+            RunnableSerializable[dict[str, str | int], HypeQuestions],
+            HYPE_PROMPT
+            | self.groq_client.with_structured_output(  # pyright: ignore[reportUnknownMemberType]
+                schema=HypeQuestions
+            ),
+        )
         try:
             result = await chain.ainvoke(input={"chunk": chunk, "n": n})
-            questions = json.loads(str(result.content))
-            if isinstance(questions, list) and all(
-                isinstance(q, str) for q in questions
-            ):
-                return questions[:n]
-            return []
+            return result.questions[:n]
         except Exception:
             return []
 
