@@ -5,9 +5,12 @@ from pathlib import Path
 from unittest.mock import AsyncMock
 
 import docx as python_docx
+from docx.oxml import OxmlElement  # pyright: ignore[reportUnknownVariableType]
+from docx.oxml.ns import qn
 from langchain_core.documents import Document
 import openpyxl
 from pypdf import PdfWriter
+from pypdf.generic import DictionaryObject, FloatObject, NameObject, StreamObject
 import pytest
 from pytest_mock.plugin import MockerFixture
 
@@ -15,13 +18,43 @@ from backend.core.config import IngestSettings
 from backend.core.ingest import DocumentIngestor, StrictMetadata
 
 
-def _make_pdf(tmp_path: Path) -> Path:
+def _make_pdf(tmp_path: Path, text: str = "Hello PDF") -> Path:
+
     writer = PdfWriter()
     page = writer.add_blank_page(width=200, height=200)
-    page.merge_page(page)
+    content = f"BT /F1 12 Tf 10 180 Td ({text}) Tj ET".encode()
+    stream = StreamObject()
+    stream._data = content
+    stream[NameObject("/Length")] = FloatObject(value=len(content))
+    font = DictionaryObject(
+        {
+            NameObject("/Type"): NameObject("/Font"),
+            NameObject("/Subtype"): NameObject("/Type1"),
+            NameObject("/BaseFont"): NameObject("/Helvetica"),
+        }
+    )
+    resources = DictionaryObject(
+        {
+            NameObject("/Font"): DictionaryObject(
+                {NameObject("/F1"): writer._add_object(obj=font)}
+            )
+        }
+    )
+    page[NameObject("/Contents")] = writer._add_object(obj=stream)
+    page[NameObject("/Resources")] = resources
     buf = BytesIO()
     _ = writer.write(stream=buf)
     path = tmp_path / "test.pdf"
+    _ = path.write_bytes(data=buf.getvalue())
+    return path
+
+
+def _make_blank_pdf(tmp_path: Path) -> Path:
+    writer = PdfWriter()
+    _ = writer.add_blank_page(width=200, height=200)
+    buf = BytesIO()
+    _ = writer.write(stream=buf)
+    path = tmp_path / "blank.pdf"
     _ = path.write_bytes(data=buf.getvalue())
     return path
 
@@ -43,6 +76,34 @@ def _make_docx(
     if header_text:
         doc.sections[0].header.paragraphs[0].text = header_text
     path = tmp_path / "test.docx"
+    doc.save(path_or_stream=str(path))
+    return path
+
+
+def _make_docx_with_sections(tmp_path: Path, sections: list[list[str]]) -> Path:
+    """Create a DOCX with explicit section breaks between each group of paragraphs."""
+    doc = python_docx.Document()
+    for s_idx, paras in enumerate(sections):
+        for text in paras:
+            _ = doc.add_paragraph(text)
+        if s_idx < len(sections) - 1:
+            # Insert a continuous section break after the last paragraph of this section
+            last_para = doc.paragraphs[-1]
+            pPr = last_para._p.get_or_add_pPr()
+            sectPr = OxmlElement(  # pyright: ignore[reportUnknownVariableType]
+                nsptag_str="w:sectPr"
+            )
+            sectType = OxmlElement(  # pyright: ignore[reportUnknownVariableType]
+                nsptag_str="w:type",
+            )
+            sectType.set(  # pyright: ignore[reportUnknownMemberType]
+                qn(tag="w:val"),
+                "nextPage",
+            )
+            sectPr.append(sectType)  # pyright: ignore[reportUnknownMemberType]
+            pPr.append(sectPr)  # pyright: ignore[reportUnknownMemberType]
+
+    path = tmp_path / "test_sections.docx"
     doc.save(path_or_stream=str(path))
     return path
 
@@ -134,6 +195,12 @@ class TestLoadPdf:
         assert docs[0].metadata["total_pages"] == 1
         assert docs[0].metadata["page"] == 1
 
+    async def test_blank_pages_are_skipped(self, tmp_path: Path) -> None:
+        path = _make_blank_pdf(tmp_path)
+        ingestor = DocumentIngestor(file_path=path)
+        docs = await ingestor._load_pdf(source=str(path))
+        assert docs == []
+
     async def test_extract_images_flag(self, tmp_path: Path) -> None:
         path = _make_pdf(tmp_path)
         config = IngestSettings(pdf_extract_images=True)
@@ -180,6 +247,27 @@ class TestLoadDocx:
         ingestor = DocumentIngestor(file_path=path, config=config)
         docs = await ingestor._load_docx(source=str(path))
         assert "MY HEADER" not in docs[0].page_content
+
+    async def test_section_breaks_produce_multiple_docs(self, tmp_path: Path) -> None:
+        path = _make_docx_with_sections(
+            tmp_path, sections=[["Section one text"], ["Section two text"]]
+        )
+        ingestor = DocumentIngestor(file_path=path)
+        docs = await ingestor._load_docx(source=str(path))
+        assert len(docs) == 2
+        assert "Section one" in docs[0].page_content
+        assert "Section two" in docs[1].page_content
+        assert docs[0].metadata["page"] == 1
+        assert docs[1].metadata["page"] == 2
+
+    async def test_large_docx_batches_into_multiple_docs(self, tmp_path: Path) -> None:
+        paragraphs = [f"Paragraph {i}" for i in range(110)]
+        path = _make_docx(tmp_path, paragraphs=paragraphs)
+        ingestor = DocumentIngestor(file_path=path)
+        docs = await ingestor._load_docx(source=str(path))
+        assert len(docs) == 3  # 50 + 50 + 10
+        assert docs[0].metadata["page"] == 1
+        assert docs[2].metadata["page"] == 3
 
 
 class TestLoadMd:
