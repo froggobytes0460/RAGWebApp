@@ -2,7 +2,7 @@
 # pyright: reportUnknownLambdaType=none
 
 from collections.abc import AsyncIterator
-from typing import Any, Never
+from typing import Any
 from unittest.mock import MagicMock
 
 from langchain_core.documents import Document
@@ -122,7 +122,7 @@ class TestLLMOpenRouterClientAstreamResponse:
     async def test_yields_content_from_chunks(self, mocker: MockerFixture) -> None:
         chunks = [_make_chunk(content="foo"), _make_chunk(content="bar")]
         mock_runnable = mocker.MagicMock()
-        mock_runnable.astream = lambda _input: _async_gen(*chunks)
+        mock_runnable.astream = lambda *_a, **_kw: _async_gen(*chunks)
 
         client = _mock_openrouter_client(mocker)
         _ = mocker.patch.object(
@@ -144,7 +144,7 @@ class TestLLMOpenRouterClientAstreamResponse:
     async def test_skips_empty_content_chunks(self, mocker: MockerFixture) -> None:
         chunks = [_make_chunk(""), _make_chunk("real"), _make_chunk("")]
         mock_runnable = mocker.MagicMock()
-        mock_runnable.astream = lambda _input: _async_gen(*chunks)
+        mock_runnable.astream = lambda *_a, **_kw: _async_gen(*chunks)
 
         client = _mock_openrouter_client(mocker)
         _ = mocker.patch.object(
@@ -299,7 +299,9 @@ class TestLLMOpenRouterClientAstreamResponse:
     ) -> None:
         call_count = 0
 
-        async def flaky_astream(_: dict[str, Any]) -> AsyncIterator[AIMessageChunk]:
+        async def flaky_astream(
+            *_a: Any, **_kw: Any  # pyright: ignore[reportAny]
+        ) -> AsyncIterator[AIMessageChunk]:
             nonlocal call_count
             call_count += 1
             if call_count < 2:
@@ -338,7 +340,9 @@ class TestLLMOpenRouterClientAstreamResponse:
     async def test_non_retryable_error_propagates(
         self, mocker: MockerFixture, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        async def bad_astream(_: dict[str, Any]) -> Never:
+        async def bad_astream(
+            *_a: Any, **_kw: Any  # pyright: ignore[reportAny]
+        ) -> AsyncIterator[AIMessageChunk]:
             raise RuntimeError("boom")
             yield _make_chunk(content="never")  # pyright: ignore[reportUnreachable]
 
@@ -369,7 +373,9 @@ class TestLLMOpenRouterClientAstreamResponse:
         error = openrouter_errors.BadGatewayResponseError(MagicMock(), MagicMock())
         first_call = True
 
-        async def fake_astream(_: dict[str, Any]) -> AsyncIterator[AIMessageChunk]:
+        async def fake_astream(
+            *_a: Any, **_kw: Any  # pyright: ignore[reportAny]
+        ) -> AsyncIterator[AIMessageChunk]:
             nonlocal first_call
             if first_call:
                 first_call = False

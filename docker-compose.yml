@@ -42,11 +42,13 @@ services:
     expose:
       - "8000"
     pull_policy: missing
-    env_file: .env
+    env_file: .env.docker
     environment:
       VECTOR_STORE__TLS_CA_CERT: /etc/qdrant/ca.crt
+      DATABASE__URI: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
     volumes:
       - ./qdrant/certs/server.crt:/etc/qdrant/ca.crt:ro
+      - fastembed_cache:/var/cache/fastembed
     depends_on:
       qdrant:
         condition: service_healthy
@@ -76,7 +78,7 @@ services:
     command: postgres -c config_file=/etc/postgresql/postgresql.conf
     expose:
       - "5432"
-    env_file: .env
+    env_file: .env.docker
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
@@ -108,8 +110,9 @@ services:
     expose:
       - "6333"
       - "6334"
+    env_file: .env.docker
     environment:
-      QDRANT__SERVICE__API_KEY: ${VECTOR_STORE__API_KEY}
+      QDRANT__SERVICE__API_KEY: ${VECTOR_STORE__API_KEY:-}
     volumes:
       - qdrant_data:/qdrant/storage
       - ./qdrant/qdrant.yaml:/qdrant/config/production.yaml:ro
@@ -141,3 +144,4 @@ networks:
 volumes:
   qdrant_data:
   postgres_data:
+  fastembed_cache:

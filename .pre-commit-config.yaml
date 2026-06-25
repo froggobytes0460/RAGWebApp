@@ -23,3 +23,21 @@ repos:
     rev: 0.11.2
     hooks:
       - id: uv-lock
+
+  - repo: local
+    hooks:
+      - id: frontend-typecheck
+        name: TypeScript type-check (frontend)
+        language: node
+        entry: bash -c 'cd frontend && npx tsc -b --noEmit'
+        pass_filenames: false
+        files: ^frontend/.*\.(ts|tsx)$
+        types: [file]
+
+      - id: frontend-eslint
+        name: ESLint (frontend)
+        language: node
+        entry: bash -c 'cd frontend && npx eslint --max-warnings=0'
+        pass_filenames: false
+        files: ^frontend/.*\.(ts|tsx|js|jsx)$
+        types: [file]

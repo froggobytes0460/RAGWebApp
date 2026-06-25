@@ -1,11 +1,13 @@
 """Document ingestion utilities for loading and processing files efficiently."""
 
-import asyncio
 from collections.abc import AsyncIterator, Coroutine
+from itertools import groupby
 from pathlib import Path
 from typing import Annotated, Callable, ClassVar, Self, TypeAlias, cast
 
+from anyio import to_thread
 import docx
+from docx.oxml.ns import qn
 from langchain_core.documents import Document
 import openpyxl
 from pydantic.fields import Field, computed_field
@@ -92,9 +94,12 @@ class DocumentIngestor(BaseModel):
                     for img in page.images:
                         if img.data:
                             parts.append(f"[image:{img.name}]")
+                page_content = "\n".join(filter(None, parts)).strip()
+                if not page_content:
+                    continue
                 docs.append(
                     Document(
-                        page_content="\n".join(filter(None, parts)),
+                        page_content=page_content,
                         metadata={
                             "source": source,
                             "file_type": "pdf",
@@ -105,42 +110,89 @@ class DocumentIngestor(BaseModel):
                 )
             return docs
 
-        return await asyncio.to_thread(_parse)
+        return await to_thread.run_sync(_parse)
 
     async def _load_docx(self, source: str) -> list[Document]:
         def _parse() -> list[Document]:
             doc = docx.Document(docx=str(self.file_path))
             core_props = doc.core_properties
-            parts: list[str] = [p.text for p in doc.paragraphs if p.text]
+            base_meta = {
+                "source": source,
+                "file_type": "docx",
+                "author": core_props.author or "",
+                "title": core_props.title or "",
+            }
+
+            section_idx = 0
+            para_sections: list[tuple[int, str]] = []  # (section_idx, text)
+            for para in doc.paragraphs:
+                sect_pr = para._p.find(  # pyright: ignore[reportUnknownMemberType, reportPrivateUsage, reportUnknownVariableType]
+                    qn(tag="w:pPr")
+                )
+                if (
+                    sect_pr is not None
+                    and sect_pr.find(  # pyright: ignore[reportUnknownMemberType]
+                        qn(tag="w:sectPr")
+                    )
+                    is not None
+                ):
+                    if para.text:
+                        para_sections.append((section_idx, para.text))
+                    section_idx += 1
+                elif para.text:
+                    para_sections.append((section_idx, para.text))
+
+            if section_idx == 0:
+                batch_size = 50
+                all_texts = [t for _, t in para_sections]
+                batches: list[list[str]] = [
+                    all_texts[i : i + batch_size]
+                    for i in range(0, max(len(all_texts), 1), batch_size)
+                ]
+                docs: list[Document] = [
+                    Document(
+                        page_content="\n".join(batch),
+                        metadata={**base_meta, "page": page_num + 1},
+                    )
+                    for page_num, batch in enumerate(batches)
+                    if batch
+                ]
+            else:
+                docs = []
+                for sec, group in groupby(para_sections, key=lambda x: x[0]):
+                    texts = [t for _, t in group]
+                    if texts:
+                        docs.append(
+                            Document(
+                                page_content="\n".join(texts),
+                                metadata={**base_meta, "page": sec + 1},
+                            )
+                        )
+
             if self.config.docx_include_tables:
                 for table in doc.tables:
                     for row in table.rows:
                         row_text = "\t".join(c.text for c in row.cells if c.text)
-                        if row_text:
-                            parts.append(row_text)
+                        if row_text and docs:
+                            docs[-1].page_content += "\n" + row_text
+
             if self.config.docx_include_headers_footers:
                 for section in doc.sections:
                     for hf in (section.header, section.footer):
                         for p in hf.paragraphs:
-                            if p.text:
-                                parts.append(p.text)
-            return [
-                Document(
-                    page_content="\n".join(parts),
-                    metadata={
-                        "source": source,
-                        "file_type": "docx",
-                        "page": 1,
-                        "author": core_props.author or "",
-                        "title": core_props.title or "",
-                    },
-                )
-            ]
+                            if p.text and docs:
+                                docs[-1].page_content += "\n" + p.text
 
-        return await asyncio.to_thread(_parse)
+            return (
+                docs
+                if docs
+                else [Document(page_content="", metadata={**base_meta, "page": 1})]
+            )
+
+        return await to_thread.run_sync(_parse)
 
     async def _load_md(self, source: str) -> list[Document]:
-        text = await asyncio.to_thread(self.file_path.read_text, "utf-8")
+        text = await to_thread.run_sync(lambda: self.file_path.read_text("utf-8"))
         return [
             Document(
                 page_content=text,
@@ -181,7 +233,7 @@ class DocumentIngestor(BaseModel):
                 )
             return docs
 
-        return await asyncio.to_thread(_parse)
+        return await to_thread.run_sync(_parse)
 
     async def ingest_lazy(self) -> AsyncIterator[Document]:
         loaders: dict[str, Callable[[str], Coroutine[None, None, list[Document]]]] = {

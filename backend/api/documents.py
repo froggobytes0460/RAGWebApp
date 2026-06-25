@@ -1,4 +1,4 @@
-import asyncio
+import anyio
 from functools import lru_cache
 from pathlib import Path
 from typing import cast
@@ -102,7 +102,7 @@ class DocumentView:
         session_factory = get_session_factory()
 
         async def _sse_generator():
-            event = get_or_create_event(job_id)
+            _ = get_or_create_event(job_id)
             while True:
                 if await request.is_disconnected():
                     break
@@ -128,9 +128,9 @@ class DocumentView:
                     break
 
                 try:
-                    _ = await asyncio.wait_for(fut=event.wait(), timeout=30)
-                    event.clear()
-                except asyncio.TimeoutError:
+                    with anyio.fail_after(30):
+                        await get_or_create_event(job_id).wait()
+                except TimeoutError:
                     pass
 
         return StreamingResponse(

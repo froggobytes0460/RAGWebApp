@@ -66,7 +66,7 @@ class RetrievedChunk(BaseModel):
         Field(
             ge=0.0,
             le=1.0,
-            description="Vector search similarity matching confidence score.",
+            description="Relevance score in [0, 1]; vector similarity or sigmoid-normalised reranker score.",
         ),
     ]
     filename: Annotated[

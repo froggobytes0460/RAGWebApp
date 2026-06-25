@@ -14,7 +14,6 @@ Instructions:
 {context}
 </context>"""
 
-
 RAG_PROMPT = ChatPromptTemplate(
     messages=[
         ("system", RAG_SYSTEM_PROMPT),
@@ -22,4 +21,23 @@ RAG_PROMPT = ChatPromptTemplate(
         ("human", "{question}"),
     ],
     input_types={"context": str, "chat_history": list[BaseMessage], "question": str},
+)
+
+HYPE_SYSTEM_PROMPT = """You are a question generation assistant for a document retrieval system.
+
+Given a text passage, generate exactly {n} distinct, specific questions that this passage directly answers.
+
+Rules:
+- Each question must be answerable solely from the passage.
+- Questions must be diverse — cover different aspects of the passage.
+- DO NOT return any kind of text other than JSON output.
+
+Example output: ["What is X?", "How does Y work?", "When did Z occur?"]"""
+
+HYPE_PROMPT = ChatPromptTemplate(
+    messages=[
+        ("system", HYPE_SYSTEM_PROMPT),
+        ("human", "{chunk}"),
+    ],
+    input_types={"chunk": str, "n": int},
 )

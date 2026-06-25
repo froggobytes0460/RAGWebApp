@@ -1,4 +1,5 @@
 from collections.abc import AsyncGenerator
+from functools import lru_cache
 import json
 from typing import cast
 
@@ -22,6 +23,7 @@ from backend.api.schemas import (
     StreamChunk,
 )
 from backend.core.database import get_session, get_session_factory
+from backend.core.logging import app_logger
 from backend.core.ingest import StrictMetadata
 from backend.core.llms import LLMClientFactory, LLMClientProto
 from backend.core.models import ChatMessage, ChatSession
@@ -34,7 +36,8 @@ messages_router = APIRouter(
 )
 
 
-def _get_llm_client() -> LLMClientProto:
+@lru_cache(maxsize=1)
+def get_llm_client() -> LLMClientProto:
     return LLMClientFactory.from_settings()
 
 
@@ -42,6 +45,9 @@ def _get_llm_client() -> LLMClientProto:
 class MessageView:
     db: AsyncSession = cast(AsyncSession, Depends(dependency=get_session))
     vector_store: VectorStore = cast(VectorStore, Depends(dependency=get_vector_store))
+    llm_client: LLMClientProto = cast(
+        LLMClientProto, Depends(dependency=get_llm_client)
+    )
 
     @messages_router.post(path="/", status_code=status.HTTP_201_CREATED)
     @limiter.limit(  # pyright: ignore[reportUnknownMemberType, reportUntypedFunctionDecorator]
@@ -59,6 +65,7 @@ class MessageView:
             query=body.question,
             session_id=session_id,
             k=body.top_k,
+            score_threshold=body.score_threshold,
         )
 
         if not scored_docs:
@@ -85,14 +92,6 @@ class MessageView:
             self.db.add(instance=ChatSession(id=session_id))
             await self.db.flush()
 
-        user_msg = ChatMessage(
-            session_id=session_id,
-            role="user",
-            content=body.question,
-        )
-        self.db.add(instance=user_msg)
-        await self.db.flush()
-
         stmt = (
             select(ChatMessage)
             .where(ChatMessage.session_id == session_id)
@@ -108,18 +107,22 @@ class MessageView:
                 else AIMessage(content=m.content)
             )
             for m in prior_messages
-            if m.id != user_msg.id
         ]
 
+        user_msg = ChatMessage(
+            session_id=session_id,
+            role="user",
+            content=body.question,
+        )
+        self.db.add(instance=user_msg)
         await self.db.commit()
 
-        llm_client = _get_llm_client()
         async_session_factory = get_session_factory()
 
         async def event_stream() -> AsyncGenerator[str, None]:
             answer_parts: list[str] = []
             try:
-                async for text in llm_client.astream_response(
+                async for text in self.llm_client.astream_response(
                     documents=retrieved_docs,
                     question=body.question,
                     chat_history=chat_history,
@@ -148,7 +151,12 @@ class MessageView:
                 yield f"event: done\ndata: {done_payload}\n\n"
 
             except Exception as exc:
-                error_payload = json.dumps(obj={"detail": str(exc)})
+                app_logger.exception("SSE stream error: %s", exc)
+                error_payload = json.dumps(
+                    obj={
+                        "detail": "An internal error occurred while generating the response."
+                    }
+                )
                 yield f"event: error\ndata: {error_payload}\n\n"
 
         return StreamingResponse(

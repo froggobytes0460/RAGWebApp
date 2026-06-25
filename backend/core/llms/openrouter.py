@@ -1,12 +1,14 @@
-from collections.abc import AsyncIterator, Sequence
-from typing import Annotated, Any, ClassVar, Self
+# pyright: reportExplicitAny=none
 
-from openrouter import errors
-from openrouter.errors.openroutererror import OpenRouterError
+from collections.abc import AsyncIterator, Sequence
+from typing import Annotated, Any, ClassVar, Self, cast
+
 from langchain_core.documents import Document
 from langchain_core.messages import AIMessageChunk, BaseMessage
 from langchain_core.runnables.base import RunnableSerializable
 from langchain_openrouter import ChatOpenRouter
+from openrouter import errors
+from openrouter.errors.openroutererror import OpenRouterError
 from pydantic import BaseModel, Field
 from tenacity import (
     AsyncRetrying,
@@ -16,7 +18,8 @@ from tenacity import (
 )
 
 from backend.core.config import settings
-from backend.core.llms.prompt import RAG_PROMPT
+from backend.core.llms.llm_schema import HypeQuestions
+from backend.core.llms.prompt import HYPE_PROMPT, RAG_PROMPT
 
 
 class LLMOpenRouterClient(BaseModel):
@@ -37,9 +40,7 @@ class LLMOpenRouterClient(BaseModel):
     @property
     def runnable_lcel(
         self,
-    ) -> RunnableSerializable[
-        dict[str, Any], Any  # pyright: ignore[reportExplicitAny]
-    ]:
+    ) -> RunnableSerializable[dict[str, Any], Any]:
         return RAG_PROMPT | self.openrouter_client
 
     @classmethod
@@ -54,6 +55,20 @@ class LLMOpenRouterClient(BaseModel):
             )
         )
 
+    async def generate_hype_questions(self, chunk: str, n: int) -> list[str]:
+        chain = cast(
+            RunnableSerializable[dict[str, str | int], HypeQuestions],
+            HYPE_PROMPT
+            | self.openrouter_client.with_structured_output(  # pyright: ignore[reportUnknownMemberType]
+                schema=HypeQuestions
+            ),
+        )
+        try:
+            result = await chain.ainvoke(input={"chunk": chunk, "n": n})
+            return result.questions[:n]
+        except Exception:
+            return []
+
     async def astream_response(
         self,
         documents: list[Document],
@@ -61,12 +76,6 @@ class LLMOpenRouterClient(BaseModel):
         chat_history: Sequence[BaseMessage] | None = None,
     ) -> AsyncIterator[str]:
         context = "\n\n".join(doc.page_content for doc in documents)
-        payload: dict[str, str | Sequence[BaseMessage]] = {
-            "context": context,
-            "question": question,
-            "chat_history": chat_history or [],
-        }
-
         retrier = AsyncRetrying(
             stop=stop_after_attempt(settings.llm.max_retries),
             wait=wait_exponential_jitter(initial=2, max=10),
@@ -81,7 +90,13 @@ class LLMOpenRouterClient(BaseModel):
 
         async for attempt in retrier:
             with attempt:
-                stream = self.runnable_lcel.astream(payload)
+                stream = self.runnable_lcel.astream(
+                    input={
+                        "context": context,
+                        "question": question,
+                        "chat_history": chat_history or [],
+                    }
+                )
                 first_chunk = await stream.__anext__()
 
         if first_chunk and first_chunk.content:

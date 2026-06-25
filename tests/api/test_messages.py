@@ -13,6 +13,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 import backend.core.models  # pyright: ignore[reportUnusedImport]
 from backend.api.app import app
 from backend.api.documents import get_vector_store
+from backend.api.messages import get_llm_client
 from backend.core.database import get_session
 from backend.core.models import ChatMessage, ChatSession
 
@@ -43,7 +44,7 @@ class TestCreateMessage:
         mocker: pytest_mock.MockerFixture,
     ) -> None:
         mock_llm = _make_mock_llm(answer="The answer is 42.", mocker=mocker)
-        _ = mocker.patch("backend.api.messages._get_llm_client", return_value=mock_llm)
+        app.dependency_overrides[get_llm_client] = lambda: mock_llm
 
         resp = await client.post(
             url="/api/v1/chats/sess-test/messages/",
@@ -97,7 +98,7 @@ class TestCreateMessage:
         mocker: pytest_mock.MockerFixture,
     ) -> None:
         mock_llm = _make_mock_llm(answer="persisted answer", mocker=mocker)
-        _ = mocker.patch("backend.api.messages._get_llm_client", return_value=mock_llm)
+        app.dependency_overrides[get_llm_client] = lambda: mock_llm
 
         background_factory = async_sessionmaker(
             bind=db_engine,  # type: ignore[arg-type]
@@ -131,7 +132,7 @@ class TestCreateMessage:
         mocker: pytest_mock.MockerFixture,
     ) -> None:
         mock_llm = _make_mock_llm(answer="ok", mocker=mocker)
-        _ = mocker.patch("backend.api.messages._get_llm_client", return_value=mock_llm)
+        app.dependency_overrides[get_llm_client] = lambda: mock_llm
 
         background_factory = async_sessionmaker(
             bind=db_engine,  # type: ignore[arg-type]

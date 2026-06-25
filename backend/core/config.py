@@ -1,19 +1,30 @@
 from pathlib import Path
 import re
-from typing import Annotated, ClassVar, Literal, Self
+from typing import Annotated, ClassVar, Literal, Self, TypeAlias
 
+from fastembed.rerank.cross_encoder import (  # pyright: ignore[reportMissingTypeStubs]
+    TextCrossEncoder,
+)
 from pydantic.fields import Field
 from pydantic.functional_validators import field_validator, model_validator
 from pydantic.main import BaseModel
-from pydantic.networks import AnyHttpUrl, AnyUrl, PostgresDsn, UrlConstraints
+from pydantic.networks import AnyHttpUrl, AnyUrl, UrlConstraints
 from pydantic.types import FilePath, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-SqliteDsn = Annotated[
+SqliteDsn: TypeAlias = Annotated[
     AnyUrl,
     UrlConstraints(
         allowed_schemes=["sqlite+aiosqlite"],
         host_required=False,
+    ),
+]
+
+PostgresDsn: TypeAlias = Annotated[
+    AnyUrl,
+    UrlConstraints(
+        allowed_schemes=["postgresql+asyncpg"],
+        host_required=True,
     ),
 ]
 
@@ -52,6 +63,14 @@ class IngestSettings(BaseModel):
             gt=0, description="Number of ingestion workers processing jobs in parallel."
         ),
     ] = 4
+
+    hype_questions_per_chunk: Annotated[
+        int,
+        Field(
+            gt=0,
+            description="Number of hypothetical questions generated per chunk during HyPE indexing.",
+        ),
+    ] = 3
 
     # PDF options
     pdf_extract_images: Annotated[
@@ -251,6 +270,47 @@ class SearchSettings(BaseModel):
     ] = 0.5
 
 
+class RerankSettings(BaseModel):
+    """Settings for cross-encoder reranking."""
+
+    enabled: Annotated[
+        bool,
+        Field(description="Enable cross-encoder reranking of retrieved chunks."),
+    ] = True
+
+    model_name: Annotated[
+        str,
+        Field(
+            validate_default=True,
+            description="FastEmbed cross-encoder model name. Must be listed in TextCrossEncoder.list_supported_models().",
+        ),
+    ] = "Xenova/ms-marco-MiniLM-L-6-v2"
+
+    batch_size: Annotated[
+        int,
+        Field(gt=0, description="Number of passages to score per reranking batch."),
+    ] = 32
+
+    timeout: Annotated[
+        float,
+        Field(
+            gt=0, description="Timeout in seconds for the reranker cross-encoder call."
+        ),
+    ] = 60.0
+
+    @field_validator("model_name")
+    @classmethod
+    def verify_model_name_is_available(cls, v: str) -> str:
+        supported_models = {
+            m["model"] for m in TextCrossEncoder.list_supported_models()
+        }
+        if v not in supported_models:
+            raise ValueError(
+                f"Reranker model '{v}' is unavailable. Must be one of: {', '.join(sorted(supported_models))}"
+            )
+        return v
+
+
 class LLMSettings(BaseModel):
     """Settings for LLM."""
 
@@ -299,34 +359,17 @@ class DatabaseSettings(BaseModel):
         Field(description="Log all SQL statements to stdout. Useful for debugging."),
     ] = False
 
-    @field_validator("uri")
-    @classmethod
-    def validate_url(cls, v: SqliteDsn | PostgresDsn) -> SqliteDsn | PostgresDsn:
-        scheme = str(v).split("://")[0]
-        if scheme == "sqlite+aiosqlite":
-            return v
-        if scheme != "postgresql+asyncpg":
-            raise ValueError(
-                f"PostgreSQL URLs must use the 'postgresql+asyncpg' driver, got '{scheme}'."
-            )
-        return v
-
 
 class Settings(BaseSettings):
     """Global settings parsed from environment variables."""
 
-    log: LogSettings = LogSettings()
-
-    database: DatabaseSettings = DatabaseSettings()
-
+    log: LogSettings
+    database: DatabaseSettings
     vector_store: VectorStoreSettings
-
     text_chunk: TextChunkSettings
-
     search: SearchSettings
-
     llm: LLMSettings
-
+    rerank: RerankSettings = RerankSettings()
     ingest: IngestSettings
 
     model_config: ClassVar[SettingsConfigDict] = SettingsConfigDict(

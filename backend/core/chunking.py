@@ -1,5 +1,6 @@
-import asyncio
 from functools import lru_cache
+
+from anyio import to_thread
 
 from langchain_core.documents import Document
 from semantic_text_splitter import TextSplitter
@@ -46,4 +47,4 @@ class TextChunker:
         return result
 
     async def achunk_text(self, documents: list[Document]) -> list[Document]:
-        return await asyncio.to_thread(self._split_documents, documents)
+        return await to_thread.run_sync(self._split_documents, documents)

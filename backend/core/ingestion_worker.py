@@ -1,31 +1,36 @@
 import asyncio
+import anyio
 from pathlib import Path
 import tempfile
-from typing import Literal
+from typing import Literal, cast
 
+from langchain_core.documents import Document
 from sqlalchemy.ext.asyncio import async_sessionmaker
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from backend.core.chunking import TextChunker
+from backend.core.config import settings
 from backend.core.database import get_session_factory
-from backend.core.ingest import DocumentIngestor
+from backend.core.ingest import DocumentIngestor, StrictMetadata
+from backend.core.llms import LLMClientFactory
 from backend.core.logging import app_logger
 from backend.core.models import IngestionJob
 from backend.core.vector_store import VectorStore
 
 # Maps job_id → Event so the SSE progress stream can be woken up after each DB write.
-_progress_events: dict[str, asyncio.Event] = {}
+_progress_events: dict[str, anyio.Event] = {}
 
 
-def get_or_create_event(job_id: str) -> asyncio.Event:
+def get_or_create_event(job_id: str) -> anyio.Event:
     if job_id not in _progress_events:
-        _progress_events[job_id] = asyncio.Event()
+        _progress_events[job_id] = anyio.Event()
     return _progress_events[job_id]
 
 
 def signal_progress(job_id: str) -> None:
     event = _progress_events.get(job_id)
     if event:
+        _progress_events[job_id] = anyio.Event()
         event.set()
 
 
@@ -77,7 +82,7 @@ async def _run_pipeline(
         documents = await DocumentIngestor(file_path=temp_file).ingest_async()
 
     if not documents:
-        app_logger.job_empty(job_id, safe_filename)
+        app_logger.job_empty(job_id, filename=safe_filename)
         await _persist_job_update(
             job_id,
             session_factory,
@@ -86,16 +91,64 @@ async def _run_pipeline(
         )
         return
 
-    await _persist_job_update(job_id, session_factory, progress=40)
+    await _persist_job_update(job_id, session_factory, progress=30)
 
     text_chunks = await TextChunker().achunk_text(documents=documents)
-    app_logger.job_chunked(job_id, len(text_chunks))
+    app_logger.job_chunked(job_id, chunk_count=len(text_chunks))
+
+    await _persist_job_update(job_id, session_factory, progress=50)
+
+    n = settings.ingest.hype_questions_per_chunk
+    llm_client = LLMClientFactory.from_settings()
+
+    chunk_queue: asyncio.Queue[Document] = asyncio.Queue()
+    for chunk in text_chunks:
+        chunk_queue.put_nowait(item=chunk)
+
+    chunk_question_pairs: list[tuple[Document, list[str]]] = []
+
+    async def _worker() -> None:
+        while True:
+            try:
+                chunk = chunk_queue.get_nowait()
+            except asyncio.QueueEmpty:
+                return
+            chunk_queue.task_done()
+            try:
+                chunk_metadata = cast(StrictMetadata, chunk.metadata)
+                filename = chunk_metadata.get("filename", "unknown")
+                page = chunk_metadata.get("page_number", chunk_metadata.get("page", ""))
+                header = (
+                    f"[Document: {filename}"
+                    + (f" | Page: {page}" if page else "")
+                    + "]"
+                )
+                grounded_chunk = f"{header}\n\n{chunk.page_content}"
+                with anyio.fail_after(delay=30.0):
+                    questions = await llm_client.generate_hype_questions(
+                        chunk=grounded_chunk, n=n
+                    )
+            except TimeoutError:
+                app_logger.warning(
+                    "HyPE generation timed out for a chunk; using fallback."
+                )
+                questions = []
+            chunk_question_pairs.append((chunk, questions))
+
+    pool_size = min(5, len(text_chunks))
+    async with anyio.create_task_group() as tg:
+        for _ in range(pool_size):
+            _ = tg.start_soon(func=_worker)
 
     await _persist_job_update(job_id, session_factory, progress=70)
 
-    _ = await vector_store.ainsert_docs(documents=text_chunks, session_id=session_id)
+    _ = await vector_store.ainsert_hype_docs(
+        pairs=chunk_question_pairs, session_id=session_id
+    )
 
-    app_logger.job_complete(job_id, len(text_chunks), session_id)
+    app_logger.job_complete(
+        job_id=job_id, chunk_count=len(text_chunks), session_id=session_id
+    )
     await _persist_job_update(
         job_id,
         session_factory,
@@ -117,7 +170,7 @@ async def run_ingestion_worker(
         job_id = await queue.get()
         try:
             async with session_factory() as session:
-                job = await session.get(IngestionJob, job_id)
+                job = await session.get(entity=IngestionJob, ident=job_id)
                 if job is None:
                     _ = file_store.pop(job_id, None)
                     continue
@@ -146,8 +199,7 @@ async def run_ingestion_worker(
                 app_logger.job_failed(
                     "Failed to persist error state for job %s", job_id
                 )
-                # Wake the SSE stream even if the DB write failed so it does not
-                # hang indefinitely waiting for a status update that will never land.
+
                 signal_progress(job_id)
         finally:
             cleanup_event(job_id)

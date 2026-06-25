@@ -53,11 +53,11 @@ export function ChatInput({ onSend, isStreaming, onStop }: ChatInputProps) {
           <div className="flex flex-col gap-3">
             <label className="flex flex-col gap-1">
               <div className="flex justify-between text-xs text-gray-400">
-                <span>Top K chunks</span>
+                <span>Top K chunks (after reranking)</span>
                 <span className="font-medium text-gray-200">{topK}</span>
               </div>
               <input
-                type="range" min={1} max={50} value={topK}
+                type="range" min={1} max={25} value={topK}
                 onChange={(e) => setTopK(Number(e.target.value))}
                 className="accent-violet-600"
               />

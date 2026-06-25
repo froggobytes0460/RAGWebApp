@@ -1,5 +1,48 @@
 import type { MessageRequest, RetrievedChunk } from '../types/api'
 
+export interface SseFrame {
+  eventType: string
+  data: string
+}
+
+export async function parseSseStream(
+  body: ReadableStream<Uint8Array>,
+  onFrame: (frame: SseFrame) => boolean | void,
+  signal?: AbortSignal,
+): Promise<void> {
+  const reader = body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      buffer += decoder.decode(value, { stream: true })
+
+      const events = buffer.split('\n\n')
+      buffer = events.pop() ?? ''
+
+      for (const eventBlock of events) {
+        const lines = eventBlock.split('\n')
+        let eventType = ''
+        let dataLine = ''
+        for (const line of lines) {
+          if (line.startsWith('event: ')) eventType = line.slice(7).trim()
+          if (line.startsWith('data: ')) dataLine = line.slice(6).trim()
+        }
+        if (!dataLine) continue
+        const stop = onFrame({ eventType, data: dataLine })
+        if (stop) return
+      }
+    }
+  } catch (err) {
+    if ((err as Error).name !== 'AbortError') throw err
+  } finally {
+    if (signal?.aborted) reader.cancel().catch(() => {})
+  }
+}
+
 export interface SSEHandlers {
   onChunk: (text: string) => void
   onDone: (chunks: RetrievedChunk[]) => void
@@ -35,38 +78,19 @@ export async function streamMessage(
     return
   }
 
-  const reader = response.body!.getReader()
-  const decoder = new TextDecoder()
-  let buffer = ''
-
   try {
-    while (true) {
-      const { done, value } = await reader.read()
-      if (done) break
-      buffer += decoder.decode(value, { stream: true })
-
-      const events = buffer.split('\n\n')
-      buffer = events.pop() ?? ''
-
-      for (const eventBlock of events) {
-        const lines = eventBlock.split('\n')
-        let eventType = ''
-        let dataLine = ''
-        for (const line of lines) {
-          if (line.startsWith('event: ')) eventType = line.slice(7).trim()
-          if (line.startsWith('data: ')) dataLine = line.slice(6).trim()
-        }
-        if (!dataLine) continue
-        const payload = JSON.parse(dataLine) as Record<string, unknown>
+    await parseSseStream(
+      response.body!,
+      ({ eventType, data }) => {
+        const payload = JSON.parse(data) as Record<string, unknown>
         if (eventType === 'chunk') handlers.onChunk(payload.text as string)
         if (eventType === 'done')
           handlers.onDone((payload.retrieved_chunks as RetrievedChunk[]) ?? [])
         if (eventType === 'error') handlers.onError(payload.detail as string)
-      }
-    }
-  } catch (err) {
-    if ((err as Error).name !== 'AbortError') {
-      handlers.onError('Stream interrupted')
-    }
+      },
+      signal,
+    )
+  } catch {
+    handlers.onError('Stream interrupted')
   }
 }

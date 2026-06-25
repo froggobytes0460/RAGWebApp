@@ -1,10 +1,11 @@
-import asyncio
 from datetime import datetime, timedelta, timezone
 from functools import lru_cache
 from pathlib import Path
 from typing import Literal, Self, cast
 import uuid
 
+import anyio
+from anyio import to_thread
 from fastembed.common.types import NumpyArray
 from fastembed.text import TextEmbedding
 from langchain_core.documents import Document
@@ -16,6 +17,7 @@ from qdrant_client import models
 from backend.core.config import VectorStoreSettings, settings
 from backend.core.ingest import StrictMetadata
 from backend.core.logging import app_logger
+from backend.core.reranker import arerank
 
 
 @lru_cache(maxsize=1)
@@ -97,20 +99,18 @@ class VectorStore:
                 self.vector_store_settings.collection_name,
             )
 
-        session_id_res, uploaded_at_res = await asyncio.gather(
-            self._client.create_payload_index(
-                collection_name=self.vector_store_settings.collection_name,
-                field_name="metadata.session_id",
-                field_schema=models.KeywordIndexParams(
-                    type=models.KeywordIndexType.KEYWORD
-                ),
+        session_id_res = await self._client.create_payload_index(
+            collection_name=self.vector_store_settings.collection_name,
+            field_name="metadata.session_id",
+            field_schema=models.KeywordIndexParams(
+                type=models.KeywordIndexType.KEYWORD
             ),
-            self._client.create_payload_index(
-                collection_name=self.vector_store_settings.collection_name,
-                field_name="metadata.uploaded_at",
-                field_schema=models.DatetimeIndexParams(
-                    type=models.DatetimeIndexType.DATETIME
-                ),
+        )
+        uploaded_at_res = await self._client.create_payload_index(
+            collection_name=self.vector_store_settings.collection_name,
+            field_name="metadata.uploaded_at",
+            field_schema=models.DatetimeIndexParams(
+                type=models.DatetimeIndexType.DATETIME
             ),
         )
 
@@ -118,6 +118,51 @@ class VectorStore:
             "session_id": session_id_res,
             "uploaded_at": uploaded_at_res,
         }
+
+    async def ainsert_hype_docs(
+        self,
+        pairs: list[tuple[Document, list[str]]],
+        session_id: str,
+    ) -> list[str]:
+        curr_time = datetime.now(tz=timezone.utc).isoformat()
+        all_point_ids: list[str] = []
+        points_batch: list[models.PointStruct] = []
+
+        for chunk_doc, questions in pairs:
+            chunk_doc.metadata["session_id"] = session_id
+            chunk_doc.metadata["uploaded_at"] = curr_time
+            chunk_id = str(uuid.uuid4())
+
+            embed_texts = questions if questions else [chunk_doc.page_content]
+            vectors: list[NumpyArray] = await to_thread.run_sync(
+                self._embed, embed_texts
+            )
+
+            for vector in vectors:
+                point_id = str(uuid.uuid4())
+                all_point_ids.append(point_id)
+                points_batch.append(
+                    models.PointStruct(
+                        id=point_id,
+                        vector=vector,  # pyright: ignore[reportArgumentType]
+                        payload={
+                            "page_content": chunk_doc.page_content,
+                            "metadata": chunk_doc.metadata,
+                            "chunk_id": chunk_id,
+                        },
+                    )
+                )
+
+        batch_size = self.vector_store_settings.upsert_batch_size
+        collection = self.vector_store_settings.collection_name
+
+        async def _upsert(batch: list[models.PointStruct]) -> None:
+            _ = await self._client.upsert(collection_name=collection, points=batch)
+
+        async with anyio.create_task_group() as tg:
+            for s in range(0, len(points_batch), batch_size):
+                _ = tg.start_soon(_upsert, points_batch[s : s + batch_size])
+        return all_point_ids
 
     async def ainsert_docs(
         self, documents: list[Document], session_id: str
@@ -134,80 +179,106 @@ class VectorStore:
         batch_size = self.vector_store_settings.upsert_batch_size
         batch_ranges = range(0, len(documents), batch_size)
 
-        all_vectors: list[NumpyArray] = await asyncio.to_thread(self._embed, texts)
+        all_vectors: list[NumpyArray] = await to_thread.run_sync(self._embed, texts)
+        collection = self.vector_store_settings.collection_name
 
-        _ = await asyncio.gather(
-            *[
-                self._client.upsert(
-                    collection_name=self.vector_store_settings.collection_name,
-                    points=[
-                        models.PointStruct(
-                            id=point_id,
-                            vector=vector,  # pyright: ignore[reportArgumentType]
-                            payload={
-                                "page_content": doc.page_content,
-                                "metadata": doc.metadata,
-                            },
-                        )
-                        for point_id, vector, doc in zip(
-                            ids[s : s + batch_size],
-                            all_vectors[s : s + batch_size],
-                            documents[s : s + batch_size],
-                        )
-                    ],
-                )
-                for s in batch_ranges
-            ]
-        )
+        async def _upsert(batch: list[models.PointStruct]) -> None:
+            _ = await self._client.upsert(collection_name=collection, points=batch)
+
+        async with anyio.create_task_group() as tg:
+            for s in batch_ranges:
+                batch_points = [
+                    models.PointStruct(
+                        id=point_id,
+                        vector=vector,  # pyright: ignore[reportArgumentType]
+                        payload={
+                            "page_content": doc.page_content,
+                            "metadata": doc.metadata,
+                            "chunk_id": point_id,
+                        },
+                    )
+                    for point_id, vector, doc in zip(
+                        ids[s : s + batch_size],
+                        all_vectors[s : s + batch_size],
+                        documents[s : s + batch_size],
+                    )
+                ]
+                _ = tg.start_soon(_upsert, batch_points)
 
         return ids
 
     async def asearch_with_scores(
-        self, query: str, session_id: str, k: int | None = None
+        self,
+        query: str,
+        session_id: str,
+        k: int | None = None,
+        score_threshold: float | None = None,
     ) -> list[tuple[Document, float]]:
         top_k = k or self.k
-        session_filter = models.Filter(
-            must=[
-                models.FieldCondition(
-                    key="metadata.session_id",
-                    match=models.MatchValue(value=session_id),
-                )
-            ]
-        )
+        hype_n = settings.ingest.hype_questions_per_chunk
+        fetch_k = top_k * (hype_n + 1)
 
-        query_vector = (await asyncio.to_thread(self._embed, [query]))[0]
+        must_conditions: list[models.Condition] = [
+            models.FieldCondition(
+                key="metadata.session_id",
+                match=models.MatchValue(value=session_id),
+            )
+        ]
+
+        qdrant_filter = models.Filter(must=must_conditions)
+        query_vector = (await to_thread.run_sync(self._embed, [query]))[0]
 
         if settings.search.search_type == "mmr":
-            return await self._mmr_search(
+            results = await self._mmr_search(
                 query_vector=query_vector,
-                session_filter=session_filter,
+                session_filter=qdrant_filter,
                 top_k=top_k,
+                candidate_k=fetch_k,
             )
+        else:
+            response = await self._client.query_points(
+                collection_name=self.vector_store_settings.collection_name,
+                query=query_vector,
+                query_filter=qdrant_filter,
+                limit=fetch_k,
+                with_payload=True,
+                score_threshold=(
+                    settings.search.score_threshold
+                    if settings.search.search_type == "similarity_score_threshold"
+                    else None
+                ),
+            )
+            results = [
+                (self._point_to_document(point=hit), hit.score)
+                for hit in response.points
+            ]
 
-        response = await self._client.query_points(
-            collection_name=self.vector_store_settings.collection_name,
-            query=query_vector,
-            query_filter=session_filter,
-            limit=top_k,
-            with_payload=True,
-            score_threshold=(
-                settings.search.score_threshold
-                if settings.search.search_type == "similarity_score_threshold"
-                else None
-            ),
-        )
+        # Deduplicate by chunk_id: keep highest-scoring point per chunk
+        seen: dict[str, tuple[Document, float]] = {}
+        for doc, score in results:
+            cid = str(doc.metadata.get("chunk_id") or id(doc))
+            if cid not in seen or score > seen[cid][1]:
+                seen[cid] = (doc, score)
+        results = list(seen.values())
 
-        return [
-            (self._point_to_document(point=hit), hit.score) for hit in response.points
-        ]
+        if settings.rerank.enabled and results:
+            results = await arerank(query=query, scored_docs=results, top_k=top_k)
+
+        if score_threshold is not None:
+            results = [
+                (doc, score) for doc, score in results if score >= score_threshold
+            ]
+
+        return results
 
     async def _mmr_search(
         self,
         query_vector: NumpyArray,
         session_filter: models.Filter,
         top_k: int,
+        candidate_k: int | None = None,
     ) -> list[tuple[Document, float]]:
-        fetch_k = top_k * 4
+        fetch_k = candidate_k if candidate_k is not None else top_k * 4
         lambda_mult = settings.search.lambda_mult
 
         mmr_response = await self._client.query_points(

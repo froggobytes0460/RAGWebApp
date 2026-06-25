@@ -16,6 +16,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from backend.api import app
 from backend.api.documents import get_vector_store
+from backend.api.messages import get_llm_client
 from backend.api.state import AppState
 from backend.core.database import get_session
 
@@ -57,6 +58,9 @@ def _make_mock_llm(answer: str, mocker: pytest_mock.MockerFixture) -> MagicMock:
 
     mock_llm = mocker.MagicMock()
     mock_llm.astream_response = _stream
+    mock_llm.generate_hype_questions = mocker.AsyncMock(
+        return_value=["What is X?", "How does Y work?", "When did Z occur?"]
+    )
     return mock_llm
 
 
@@ -78,8 +82,6 @@ async def client(
     mock_vs = _make_mock_vector_store(docs=_make_mock_docs(), mocker=mocker)
     mock_llm = _make_mock_llm(answer="default answer", mocker=mocker)
 
-    _ = mocker.patch("backend.api.messages._get_llm_client", return_value=mock_llm)
-
     background_factory = async_sessionmaker(
         bind=db_engine, class_=AsyncSession, expire_on_commit=False
     )
@@ -93,6 +95,7 @@ async def client(
 
     app.dependency_overrides[get_session] = _override_get_session
     app.dependency_overrides[get_vector_store] = lambda: mock_vs
+    app.dependency_overrides[get_llm_client] = lambda: mock_llm
 
     app.typed_state = AppState()
 

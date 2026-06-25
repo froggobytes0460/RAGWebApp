@@ -1,5 +1,7 @@
+# pyright: reportExplicitAny=none
+
 from collections.abc import AsyncIterator, Sequence
-from typing import Annotated, Any, ClassVar, Self
+from typing import Annotated, Any, ClassVar, Self, cast
 
 import groq
 from langchain_core.documents import Document
@@ -15,7 +17,8 @@ from tenacity import (
 )
 
 from backend.core.config import settings
-from backend.core.llms.prompt import RAG_PROMPT
+from backend.core.llms.llm_schema import HypeQuestions
+from backend.core.llms.prompt import HYPE_PROMPT, RAG_PROMPT
 
 
 class LLMGroqClient(BaseModel):
@@ -35,9 +38,7 @@ class LLMGroqClient(BaseModel):
     @property
     def runnable_lcel(
         self,
-    ) -> RunnableSerializable[
-        dict[str, Any], Any  # pyright: ignore[reportExplicitAny]
-    ]:
+    ) -> RunnableSerializable[dict[str, Any], Any]:
         return RAG_PROMPT | self.groq_client
 
     @classmethod
@@ -51,6 +52,20 @@ class LLMGroqClient(BaseModel):
                 max_tokens=settings.llm.max_output_token,
             )
         )
+
+    async def generate_hype_questions(self, chunk: str, n: int) -> list[str]:
+        chain = cast(
+            RunnableSerializable[dict[str, str | int], HypeQuestions],
+            HYPE_PROMPT
+            | self.groq_client.with_structured_output(  # pyright: ignore[reportUnknownMemberType]
+                schema=HypeQuestions
+            ),
+        )
+        try:
+            result = await chain.ainvoke(input={"chunk": chunk, "n": n})
+            return result.questions[:n]
+        except Exception:
+            return []
 
     async def astream_response(
         self,
