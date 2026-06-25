@@ -2,9 +2,12 @@ from datetime import datetime
 from typing import Annotated, Literal, TypeAlias
 
 from pydantic import BaseModel, Field
+from pydantic.types import StringConstraints
 from qdrant_client.models import UpdateStatus
 
-NonEmptyStr: TypeAlias = Annotated[str, Field(min_length=1)]
+NonEmptyStr: TypeAlias = Annotated[
+    str, StringConstraints(strip_whitespace=True, min_length=1)
+]
 """String type but cannot be empty ('')."""
 
 NonZeroOrNegativeInt: TypeAlias = Annotated[int, Field(gt=0)]
@@ -116,8 +119,8 @@ class JobProgressResponse(BaseModel):
     filename: NonEmptyStr
     status: Literal["queued", "processing", "done", "failed"]
     progress: int
-    chunk_count: int | None
-    error: NonEmptyStr | None
+    chunk_count: int | None = None
+    error: NonEmptyStr | None = None
 
 
 class DependencyStatus(BaseModel):
