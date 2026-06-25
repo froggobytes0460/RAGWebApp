@@ -95,22 +95,6 @@ VECTOR_STORE__URL_OR_PATH=http://qdrant:6333/
 
 Full reference in [`.env.example`](./.env.example) and [`backend/core/config.py`](./backend/core/config.py).
 
-| Variable | Default | Notes |
-| :------- | :------ | :---- |
-| `LLM__PROVIDER` | `groq` | `groq` or `openrouter` |
-| `LLM__MODEL_NAME` | `llama-3.3-70b-versatile` | Provider-specific model name |
-| `LLM__API_KEY` | — | **Required** |
-| `DATABASE__URI` | `sqlite+aiosqlite:///./rag.db` | Switch to `postgresql+asyncpg://...` in Docker |
-| `VECTOR_STORE__URL_OR_PATH` | `./.qdrant_local/` | Switch to `http://qdrant:6333/` in Docker |
-| `VECTOR_STORE__EMBEDDING_MODEL` | `BAAI/bge-small-en-v1.5` | Must match `VECTOR_STORE__VECTOR_SIZE` |
-| `VECTOR_STORE__VECTOR_SIZE` | `384` | Embedding dimensions |
-| `VECTOR_STORE__TTL` | `86400` | Stale-vector TTL (seconds) |
-| `TEXT_CHUNK__CHUNK_SIZE` | `500` | Max tokens per chunk |
-| `TEXT_CHUNK__CHUNK_OVERLAP` | `50` | Token overlap between chunks |
-| `INGEST__MAX_FILE_SIZE` | `50` | Upload size limit (MB) |
-
----
-
 ## API Reference
 
 | Method | Path | Description | Rate limit |
